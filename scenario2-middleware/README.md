@@ -26,7 +26,7 @@
 
 ### Why Custom Lightweight WAL Broker Instead of Apache Kafka?
 
-전통적인 대규모 엔터프라이즈 환경에서는 **Apache Kafka**가 대용량 메시징의 표준으로 널리 사용됩니다. 그러나 본 프로젝트가 무거운 외부 브로커 클러스터 대신 자체 **Lightweight Partitioned WAL Broker ([`middleware/lightweight_broker.py`](./middleware/lightweight_broker.py), `broker_wal.db`)**를 설계·구현한 이유는 다음과 같습니다:
+전통적인 대규모 엔터프라이즈 환경에서는 **Apache Kafka**가 대용량 메시징의 표준으로 널리 사용됩니다. 그러나 본 프로젝트가 무거운 외부 브로커 클러스터 대신 자체 **Lightweight Partitioned WAL Broker ([`src/middleware/lightweight_broker.py`](./src/middleware/lightweight_broker.py), `broker_wal.db`)**를 설계·구현한 이유는 다음과 같습니다:
 
 1. **JVM 및 인프라 오버헤드 제거 (Zero JVM Overhead)**:
    - Apache Kafka 컨테이너는 JVM 런타임으로 인해 최소 768MB~1GB 이상의 시스템 메모리를 점유하며, 브로커 기동 및 메타데이터 초기화에 20초 이상의 대기 시간이 발생합니다.
@@ -54,7 +54,7 @@ flowchart LR
     subgraph Middleware["SOAR 로그 버퍼링 미들웨어"]
         D["FastAPI 비동기 수집기<br/>(ingestor.py :8000)<br/>Auth · RateLimiter · Redaction"]
         
-        subgraph LightweightBroker["경량 파티셔닝 WAL 브로커 (middleware/lightweight_broker.py)"]
+        subgraph LightweightBroker["경량 파티셔닝 WAL 브로커 (src/middleware/lightweight_broker.py)"]
             E0[("공유 디스크 상태 (/app/state)<br/>broker_wal.db (SQLite WAL Mode)")]
             E1[("security-logs<br/>(Standard, 3 Partitions)")]
             E2[("security-logs.priority<br/>(Honeytoken/Prio, 3 Partitions)")]
@@ -427,6 +427,6 @@ $$\text{Total Sent} = \text{Total Received} = \text{Total Forwarded} + \text{per
 7. **컨슈머 리밸런스 발생 시 At-Least-Once 중복 가능성**:
    - 컨슈머 워커가 Graylog 전송 성공(HTTP 2xx) 직후 오프셋을 커밋하기 전에 리밸런스로 파티션 소유권을 상실(`on_revoke`/`on_lost`)할 경우, 해당 배치는 새 컨슈머에게 재할당되어 재전송됩니다. 하위 스토리지의 `_event_id` 기반 멱등성 처리가 필수적입니다.
 8. **지연 재시도 컨슈머(`RetryTopicConsumer`) 데몬 상시 구동 분리**:
-   - [`middleware/retry_topic_consumer.py`](./middleware/retry_topic_consumer.py) 모듈과 테스트 스위트는 구현되어 있으나, [`docker-compose.yml`](./docker-compose.yml)에는 재시도 토픽 전용 컨슈머 서비스가 분리 등록되어 있지 않습니다. 현재 DLQ 관리는 관리자 API(`POST /v1/admin/dlq/replay`)를 통한 온디맨드 재전송을 기본 운영 방식으로 제공합니다.
+   - [`src/middleware/retry_topic_consumer.py`](./src/middleware/retry_topic_consumer.py) 모듈과 테스트 스위트는 구현되어 있으나, [`docker-compose.yml`](./docker-compose.yml)에는 재시도 토픽 전용 컨슈머 서비스가 분리 등록되어 있지 않습니다. 현재 DLQ 관리는 관리자 API(`POST /v1/admin/dlq/replay`)를 통한 온디맨드 재전송을 기본 운영 방식으로 제공합니다.
 9. **OpenTelemetry 외부 트레이싱 백엔드 미번들**:
    - W3C `traceparent` 헤더 주입 및 추출, 인메모리 스팬 생성이 구현되어 있으나, 외부 OTLP/Jaeger 컬렉터로 트레이스를 전송하는 Exporter 설정은 번들되어 있지 않습니다.
