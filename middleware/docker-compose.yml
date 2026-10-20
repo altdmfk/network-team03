@@ -1,0 +1,166 @@
+services:
+  mock-graylog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soar-mock-graylog
+    hostname: mock-graylog
+    restart: unless-stopped
+    mem_limit: 256m
+    command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", "12201", "--workers", "1"]
+    ports:
+      - "12201:12201"
+    environment:
+      MOCK_GRAYLOG_HOST: "0.0.0.0"
+      MOCK_GRAYLOG_PORT: "12201"
+      KILL_CHAIN_TARGET_IP: "10.0.0.99"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12201/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - soar-siem-net
+
+  ingestor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soar-http-ingestor
+    hostname: ingestor
+    restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: 384m
+    ports:
+      - "8000:8000"
+    environment:
+      BROKER_DB_PATH: "/app/state/broker_wal.db"
+      BROKER_TOPIC: "security-logs"
+      BROKER_PRIORITY_TOPIC: "security-logs.priority"
+      PRIORITY_EVENT_TYPES: "HONEYTOKEN_ACCESS"
+      PRIORITY_MAX_SEVERITY: "2"
+      BROKER_PARTITIONS: "3"
+      BROKER_RETENTION_MS: "86400000"
+      BROKER_CONSUMER_GROUP: "graylog-shipper-group"
+      METRICS_DB_PATH: "/app/state/metrics.db"
+      INGESTOR_HOST: "0.0.0.0"
+      INGESTOR_PORT: "8000"
+      BATCH_SIZE: "100"
+      MAX_LOGS_PER_SEC: "500.0"
+      BATCH_LINGER_MS: "100"
+      POLL_TIMEOUT: "0.1"
+      AUTH_ENABLED: "true"
+      INGEST_API_KEYS: "prod-ingest-key-1,prod-ingest-key-2"
+      ADMIN_API_KEY: "prod-admin-secret-key-99"
+    volumes:
+      - metrics-state:/app/state
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - soar-siem-net
+
+  consumer-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soar-consumer-worker
+    hostname: consumer-worker
+    restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: 384m
+    command: ["python", "src/consumer_worker.py"]
+    environment:
+      BROKER_DB_PATH: "/app/state/broker_wal.db"
+      BROKER_TOPIC: "security-logs"
+      BROKER_PRIORITY_TOPIC: "security-logs.priority"
+      STANDARD_RESERVED_SHARE: "0.3"
+      BROKER_CONSUMER_GROUP: "graylog-shipper-group"
+      GRAYLOG_GELF_URL: "http://mock-graylog:12201/gelf"
+      GELF_HOST: "security-middleware"
+      DRY_RUN_GRAYLOG_MOCK: "false"
+      METRICS_DB_PATH: "/app/state/metrics.db"
+      DEAD_LETTER_FILE: "/app/state/dead_letter_logs.jsonl"
+      DLQ_BACKEND: "broker"
+      BROKER_DLQ_TOPIC: "security-logs.dlq"
+      BROKER_RETRY_1M_TOPIC: "security-logs.retry.1m"
+      BROKER_RETRY_10M_TOPIC: "security-logs.retry.10m"
+      BROKER_POISON_TOPIC: "security-logs.poison"
+      BATCH_SIZE: "100"
+      MAX_LOGS_PER_SEC: "500.0"
+      MAX_BATCHES_PER_SECOND: "5.0"
+      BATCH_LINGER_MS: "100"
+      POLL_TIMEOUT: "0.1"
+      BASE_BACKOFF_SECONDS: "1.0"
+      MAX_BACKOFF_SECONDS: "30.0"
+      MAX_DELIVERY_RETRIES: "0"
+    volumes:
+      - metrics-state:/app/state
+    depends_on:
+      mock-graylog:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os; assert os.path.exists('/proc/1/cmdline') and b'consumer_worker.py' in open('/proc/1/cmdline', 'rb').read()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "9100:9100"
+    networks:
+      - soar-siem-net
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: soar-prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    profiles:
+      - observability
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docs/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docs/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    depends_on:
+      ingestor:
+        condition: service_healthy
+      consumer-worker:
+        condition: service_healthy
+    networks:
+      - soar-siem-net
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: soar-grafana
+    hostname: grafana
+    restart: unless-stopped
+    profiles:
+      - observability
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./docs/observability/grafana_dashboard.json:/var/lib/grafana/dashboards/soar_dashboard.json:ro
+    depends_on:
+      - prometheus
+    networks:
+      - soar-siem-net
+
+volumes:
+  metrics-state:
+
+networks:
+  soar-siem-net:
+    driver: bridge

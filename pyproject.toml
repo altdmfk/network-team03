@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+testpaths = ["middleware/tests"]
+pythonpath = ["middleware/src", "middleware/simulators", "middleware"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"

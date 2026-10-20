@@ -1,0 +1,52 @@
+groups:
+  - name: soar_middleware_alerts
+    rules:
+      - alert: HighQueueLag
+        expr: sum(queue_lag) > 1000
+        for: 2m
+        labels:
+          severity: warning
+          component: broker-consumer
+        annotations:
+          summary: "Broker queue lag exceeds threshold for > 2 minutes"
+          description: "Total unconsumed message lag across partitions is {{ $value }} (threshold: 1000) for more than 2 minutes. Downstream consumer may be throttled or stalled."
+
+      - alert: DLQDepthNonZero
+        expr: dlq_depth > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: dead-letter-queue
+        annotations:
+          summary: "Dead Letter Queue has un-replayed messages for > 5 minutes"
+          description: "DLQ depth is {{ $value }}. Unprocessable or repeatedly failed messages are quarantined in DLQ. Inspection or replay required."
+
+      - alert: GraylogHigh5xxRate
+        expr: (sum(rate(delivery_attempts_total{outcome="5xx"}[5m])) / (sum(rate(delivery_attempts_total[5m])) > 0)) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+          component: graylog-shipper
+        annotations:
+          summary: "Graylog SIEM HTTP 5xx error rate exceeds 5%"
+          description: "Downstream Graylog SIEM rejected more than 5% of delivery attempts with HTTP 5xx over the last 5 minutes. Consumer worker is applying backpressure hold."
+
+      - alert: InvariantViolationsDetected
+        expr: invariant_violations > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: consistency-ledger
+        annotations:
+          summary: "Pipeline zero-loss invariant violation detected"
+          description: "Accounting ledger invariant violation count is {{ $value }}. Indicates discrepancy between received, forwarded, and dropped counts."
+
+      - alert: ConsumerNotProgressing
+        expr: (sum(rate(logs_received_total[5m])) > 0 or sum(queue_lag) > 0) and (sum(rate(logs_forwarded_total[5m])) == 0)
+        for: 3m
+        labels:
+          severity: critical
+          component: consumer-worker
+        annotations:
+          summary: "Consumer worker is not making forward progress"
+          description: "New logs are being received or queue lag is positive, but forward delivery rate is zero for 3 minutes. Worker may be blocked, partitioned, or crashing."
