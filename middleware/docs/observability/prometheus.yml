@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: "soar-ingestor"
+    metrics_path: "/metrics/prometheus"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["ingestor:8000"]
+        labels:
+          service: "ingestor"
+
+  - job_name: "soar-consumer-worker"
+    metrics_path: "/metrics"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["consumer-worker:9100"]
+        labels:
+          service: "consumer-worker"
