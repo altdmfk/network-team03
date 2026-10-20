@@ -1,0 +1,15 @@
+.git
+.gitignore
+.pytest_cache
+.mypy_cache
+.ruff_cache
+__pycache__
+*.py[cod]
+state/
+*.db
+*.db-shm
+*.db-wal
+*.jsonl
+*.tmp
+.env
+tests/

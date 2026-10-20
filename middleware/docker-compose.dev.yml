@@ -1,0 +1,9 @@
+# Docker Compose Development Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+services:
+  ingestor:
+    environment:
+      AUTH_ENABLED: "false"
+      LOG_FORMAT: "text"
+      INGEST_RATE_LIMIT_RPS: "5000.0"
+      INGEST_RATE_LIMIT_BURST: "10000.0"
