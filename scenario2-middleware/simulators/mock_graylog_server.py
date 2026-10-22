@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set
@@ -17,6 +18,7 @@ for _p in [os.path.join(_mid_root, "src"), _sim_dir, _mid_root]:
         sys.path.insert(0, _p)
 
 from config import (
+    BROKER_PRIORITY_TOPIC,
     BROKER_TOPIC,
     EXPECTED_KILL_CHAIN,
     KILL_CHAIN_TARGET_IP,
@@ -51,6 +53,8 @@ class MockGraylogState:
         self._seen_event_ids: Set[str] = set()
         self.last_received_at: Optional[float] = None
         self.last_traceparent: Optional[str] = None
+        self.standard_latencies: List[float] = []
+        self.priority_latencies: List[float] = []
 
     def reset(self) -> None:
         with self._lock:
@@ -66,6 +70,8 @@ class MockGraylogState:
             self._seen_event_ids.clear()
             self.last_received_at = None
             self.last_traceparent = None
+            self.standard_latencies.clear()
+            self.priority_latencies.clear()
 
     def set_outage(self, enabled: bool) -> bool:
         with self._lock:
@@ -103,6 +109,21 @@ class MockGraylogState:
                 self.event_type_counts[event_type] = (
                     self.event_type_counts.get(event_type, 0) + 1
                 )
+
+                # End-to-end latency tracking per lane
+                event_ts = float(item.get("timestamp", 0.0))
+                now_ts = time.time()
+                latency_sec = max(0.0, round(now_ts - event_ts, 4)) if event_ts > 0 else 0.0
+
+                is_priority = (
+                    item.get("_honeytoken_alert") is True
+                    or str(item.get("_broker_topic") or "") == BROKER_PRIORITY_TOPIC
+                    or event_type == "HONEYTOKEN_ACCESS"
+                )
+                if is_priority:
+                    self.priority_latencies.append(latency_sec)
+                else:
+                    self.standard_latencies.append(latency_sec)
 
                 if item.get("_honeytoken_alert") is True:
                     self.honeytoken_alerts_received += 1
@@ -231,7 +252,43 @@ class MockGraylogState:
                     "events": list(self.kill_chain_events),
                 },
                 "last_traceparent": self.last_traceparent,
+                "latency_telemetry": {
+                    "standard_lane": self._calculate_latency_stats(self.standard_latencies),
+                    "priority_lane": self._calculate_latency_stats(self.priority_latencies),
+                },
             }
+
+    @staticmethod
+    def _calculate_latency_stats(latencies: List[float]) -> Dict[str, Any]:
+        """Calculates count, min, avg, p95, p99, and max latency statistics in seconds."""
+        if not latencies:
+            return {
+                "count": 0,
+                "min_sec": 0.0,
+                "avg_sec": 0.0,
+                "p95_sec": 0.0,
+                "p99_sec": 0.0,
+                "max_sec": 0.0,
+            }
+        arr = sorted(latencies)
+        n = len(arr)
+
+        def percentile(p: float) -> float:
+            k = (n - 1) * p
+            f = math.floor(k)
+            c = math.ceil(k)
+            if f == c:
+                return arr[int(k)]
+            return arr[int(f)] * (c - k) + arr[int(c)] * (k - f)
+
+        return {
+            "count": n,
+            "min_sec": round(arr[0], 3),
+            "avg_sec": round(sum(arr) / n, 3),
+            "p95_sec": round(percentile(0.95), 3),
+            "p99_sec": round(percentile(0.99), 3),
+            "max_sec": round(arr[-1], 3),
+        }
 
 
 graylog_state = MockGraylogState()

@@ -325,21 +325,70 @@
 
 ---
 
-## 13. 남은 과제 (Roadmap)
+## 13. 심층 헬스체크(Deep Healthcheck), 스키마 관용도 제어, 클라이언트 Fail-Open 서킷 브레이커 및 꼬리 지연(p95/p99) 관측 고도화
+
+- **대상**
+  - [`config.py`](./src/config.py), [`ingestor.py`](./src/ingestor.py), [`simulators/client_integration_snippet.py`](./simulators/client_integration_snippet.py), [`simulators/mock_graylog_server.py`](./simulators/mock_graylog_server.py), [`simulators/spike_test_demo.py`](./simulators/spike_test_demo.py)
+- **문제**
+  1. 기존 `/v1/health`가 프로세스 생존만 확인하는 얕은 헬스체크(Shallow Healthcheck)로 동작하여, 디스크 풀(Disk Full), 읽기 전용 파일시스템 또는 SQLite WAL 락 경합(`database is locked`)으로 실제 브로커 저장이 불가능한 상태임에도 `200 OK`를 반환해 상위 로드밸런서(GSLB/ALB)가 결함 노드를 격리하지 못하고 트래픽을 계속 인입시킬 위험이 있었습니다.
+  2. 다양한 펌웨어 버전의 IoT 기기 및 레거시 클라이언트 연동 시, 사전 정의되지 않은 잉여 필드가 1개만 유입되어도 `extra="forbid"` 규칙으로 인해 `422 Unprocessable Entity` 에러가 발생하며 수집이 일괄 거부되는 스키마 경직성 문제가 존재했습니다.
+  3. 미들웨어 장애(네트워크 단절, 브로커 락, 503 과부하) 발생 시 동기 HTTP 호출을 사용하는 메인 비즈니스 API 서버나 물리 센서 루프를 제어하는 IoT 노드(ESP32)까지 호출 스레드가 블로킹되어 서비스 전체가 중단되는 연쇄 장애(Cascading Failure) 위험이 있었습니다.
+  4. 5단계 무손실 감사 리포트에 단순 수량 일치(`5,004 == 5,004`)만 표시되어, SIEM 보호를 위한 500 EPS 스로틀링 대가로 발생한 일반 레인의 백로그 꼬리 지연(Tail Latency p95/p99)과 70:30 우선순위 레인에 의한 허니토큰 지연시간 단축 효과가 정량적으로 비교 제시되지 못했습니다.
+- **수정 내용**
+  1. **심층 헬스체크(Deep Healthcheck) 및 RFC 7807 503 연동**:
+     - [`SQLiteBrokerStorage`](./src/middleware/lightweight_broker.py), [`LightweightProducer`](./src/middleware/lightweight_broker.py), [`WalLogBufferingMiddleware`](./src/ingestor.py)에 `check_health(timeout=0.1)` 메서드를 구현했습니다.
+     - `BEGIN IMMEDIATE; ROLLBACK;` 트랜잭션을 실행하여 0.1초 내에 SQLite WAL 쓰기 락 획득 가능 여부를 점검합니다.
+     - 정상 시 기존 응답 규격을 유지하면서 `"storage": "healthy"`, `"wal_writable": true`를 포함한 `200 OK`를 반환하고, DB 락 타임아웃(`sqlite3.OperationalError`), 디스크 I/O 오류, 브로커 이상 감지 시 즉시 RFC 7807 규격인 **`HTTP 503 Service Unavailable`** (`title: "Service Unavailable"`, `detail: "Broker WAL storage unhealthy or locked"`)을 반환하도록 개선했습니다 (레거시 `/health`의 `Deprecation: true` 헤더 유지).
+  2. **스키마 관용도(`STRICT_SCHEMA`) 제어 및 PII 자동 마스킹 연동**:
+     - [`PipelineSettings`](./src/config.py)에 `strict_schema: bool = Field(default=True)` 설정을 추가하고 `STRICT_SCHEMA` 환경변수와 매핑했습니다.
+     - `strict_schema=True`일 때: 기존과 동일하게 미정의 필드 유입 시 `extra="forbid"` 규격으로 `HTTP 422` 반환.
+     - `strict_schema=False`일 때: [`SecurityLogEvent`](./src/ingestor.py)의 `model_validator(mode="before")`가 최상위 미정의 잉여 필드들을 에러 없이 `raw_payload` (및 `_extra_fields`) 내부로 자동 흡수합니다.
+     - 보안 연동: 흡수된 필드에 민감 키워드(`password`, `token`, `secret_token`, `userPassword`, `api_key` 등)가 포함된 경우, 브로커 발행 전 [`redact_sensitive_data`](./src/middleware/redaction.py)를 거쳐 `"[REDACTED]"`로 치환되도록 보장했습니다.
+  3. **클라이언트 비동기 Fail-Open 서킷 브레이커 (`SafeSecurityLogClient`)**:
+     - [`simulators/client_integration_snippet.py`](./simulators/client_integration_snippet.py)에 유계 큐(`queue.Queue(maxsize=1000)`)와 백그라운드 워커 데몬 스레드를 탑재한 `SafeSecurityLogClient` 클래스를 구현했습니다.
+     - `send_log(event_dict)`는 `put_nowait()`로 호출 스레드에 0ms 만에 즉시 반환됩니다.
+     - 연속 전송 실패(`failure_threshold=3`, 타임아웃/5xx/연결 거부) 시 서킷을 `OPEN`(`recovery_timeout=10.0s`) 상태로 전환합니다.
+     - 서킷 `OPEN` 상태이거나 내부 큐 포화(`queue.Full`), 또는 최종 전송 실패 시 인입 로그를 로컬 비상 폴백 파일(`fallback_file_path`, 기본 `./client_fallback_logs.jsonl`)에 JSONL 형식으로 즉시 Append 기록하여 데이터 유실을 방지하고, 호출자에게 예외를 절대 전파하지 않는 **100% Fail-Open 계약**을 달성했습니다.
+     - ESP32 MicroPython 연동부(`log_iot_event`)에도 타이트한 소켓 타임아웃(`timeout=0.5`)과 `try...except` Fail-Open 예외 격리를 보강했습니다.
+  4. **Mock Graylog 레인별 Tail Latency(p95/p99) 집계 및 스파이크 데모 리포트 확장**:
+     - [`simulators/mock_graylog_server.py`](./simulators/mock_graylog_server.py)에서 GELF 수신 시 이벤트 타임스탬프와 수신 완료 시각의 차이를 계산하여 `standard_latencies`와 `priority_latencies`로 분리 집계하고, `GET /status`에 `latency_telemetry` (`count, min_sec, avg_sec, p95_sec, p99_sec, max_sec`)를 추가했습니다 (`POST /reset` 시 초기화).
+     - [`simulators/spike_test_demo.py`](./simulators/spike_test_demo.py)의 5단계 감사 리포트 하단에 일반 레인 꼬리 지연(`avg`, `p95`, `p99`, `max`)과 허니토큰 지연시간, 그리고 공학적 트레이드오프 요약문(`• Engineering Trade-off Summary : SIEM 보호를 위해 일반 로그 지연시간(p99)을 의도적으로 평탄화(500 EPS)하되, 70:30 우선순위 레인으로 긴급 침해 경보 골든타임(< 2.0s)을 사수함.`)을 정량 출력하도록 확장했습니다.
+- **결과**
+  - 신규 프로덕션 복원력 및 관측성 단위/통합 테스트 15건을 추가하여, 전체 **152개 테스트가 100% 무결성으로 통과**했습니다 (회귀 결함 0건).
+  - 검증 테스트:
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestDeepHealthcheck::test_v1_health_normal_returns_200_with_storage_fields`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestDeepHealthcheck::test_legacy_health_normal_returns_200_and_deprecation_header`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestDeepHealthcheck::test_v1_health_db_lock_returns_503_rfc7807_problem_json`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestDeepHealthcheck::test_legacy_health_error_retains_deprecation_header_on_503`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestDeepHealthcheck::test_healthcheck_with_real_exclusive_sqlite_lock`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSchemaToleranceAndMasking::test_strict_schema_true_rejects_extra_fields_with_422`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSchemaToleranceAndMasking::test_strict_schema_false_absorbs_extra_fields_into_raw_payload`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSchemaToleranceAndMasking::test_strict_schema_false_masks_sensitive_extra_fields_as_redacted`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSchemaToleranceAndMasking::test_strict_schema_false_ingest_endpoint_and_serialization`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSafeSecurityLogClient::test_client_send_log_non_blocking_0ms`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSafeSecurityLogClient::test_client_circuit_trips_to_open_on_failures_and_writes_fallback`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSafeSecurityLogClient::test_client_queue_full_fail_open_writes_directly_to_fallback`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestSafeSecurityLogClient::test_esp32_snippet_fail_open_isolation`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestMockGraylogLatencyTelemetry::test_mock_graylog_status_calculates_lane_latency_statistics`
+    - [`tests/test_production_resilience.py`](./tests/test_production_resilience.py):: `TestMockGraylogLatencyTelemetry::test_mock_graylog_post_reset_clears_latencies`
+
+---
+
+## 14. 남은 과제 (Roadmap)
 
 코드베이스 정밀 전수 검사 결과, 현재 코드에 구현되지 않았거나(ABSENT) 일부 라이브러리 레벨에 한정되어 상시 구동되지 않는(PARTIAL) 항목들을 명확히 분리하여 기록합니다.
 
-### 13.1 미구현 항목 (ABSENT)
+### 14.1 미구현 항목 (ABSENT)
 1. **CI 워크플로우 (Continuous Integration Workflow)**:
    - GitHub Actions(`.github/workflows/`) 또는 GitLab CI 등 자동화된 빌드/테스트 파이프라인이 레포지토리에 존재하지 않습니다. 향후 PR 단위 `pytest`, `ruff`, `mypy` 자동화 워크플로우 구성이 필요합니다.
 2. **Hypothesis 기반 속성 기반 테스트 (Property-Based Testing)**:
-   - 현재 137개 테스트는 결정론적 단위/통합 테스트 스위트로 구성되어 있으며, 임의의 페이로드 바이트 및 극단적 지터 타이밍을 생성하는 `hypothesis` 라이브러리 기반 테스트는 부재합니다.
+   - 현재 152개 테스트는 결정론적 단위/통합 테스트 스위트로 구성되어 있으며, 임의의 페이로드 바이트 및 극단적 지터 타이밍을 생성하는 `hypothesis` 라이브러리 기반 테스트는 부재합니다.
 3. **Real-SIEM Docker Compose 프로파일 (`real-siem`)**:
    - `docker-compose.yml`에는 실제 상용 Graylog 및 OpenSearch/Elasticsearch 컨테이너 클러스터 배포 프로파일이 포함되어 있지 않으며, 경량 `mock-graylog`만을 기본 제공합니다.
 4. **Makefile 빌드 및 실행 자동화 도구**:
    - `make test`, `make build`, `make up` 등의 통합 명령어를 제공하는 `Makefile`이 존재하지 않으며, 현재는 `docker compose` 및 `pytest` 명령어를 직접 실행해야 합니다.
 
-### 13.2 부분 구현 및 추가 연동 필요 항목 (PARTIAL)
+### 14.2 부분 구현 및 추가 연동 필요 항목 (PARTIAL)
 1. **지연 재시도 토픽 컨슈머(`RetryTopicConsumer`) 데몬 상시 구동**:
    - [`middleware/retry_topic_consumer.py`](./middleware/retry_topic_consumer.py) 모듈과 단위 테스트는 완성되어 있으나, [`docker-compose.yml`](./docker-compose.yml) 상에서 `RetryTopicConsumer`를 백그라운드 서비스로 상시 구동하는 배포 설정이 연결되어 있지 않습니다. 현재는 관리자 API(`POST /v1/admin/dlq/replay`)를 통한 온디맨드 재전송이 주력으로 사용됩니다.
 2. **OpenTelemetry 외부 트레이스 수집기(OTLP Exporter / Jaeger) 연동**:
