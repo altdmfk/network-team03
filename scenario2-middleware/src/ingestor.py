@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 import math
+import sqlite3
 import threading
 import time
 import uuid
@@ -27,8 +28,9 @@ from middleware.lightweight_broker import (
 )
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+import config
 from config import (
     BROKER_CONSUMER_GROUP,
     BROKER_DB_PATH,
@@ -53,6 +55,7 @@ from config import (
     PRODUCER_BUFFER_RETRY_SLEEP,
     REDACTION_PATTERNS,
     SETTINGS,
+    STRICT_SCHEMA,
 )
 from metrics_store import SharedMetricsStore
 from middleware.auth import require_admin_auth, require_ingest_auth
@@ -90,9 +93,68 @@ class SecurityLogEvent(BaseModel):
     """
     Standardized security event schema for Main Flask API & ESP32 IoT nodes.
     Enforces millisecond-precision Unix epoch timestamps and strict field types.
+    Supports dynamic strict_schema toggle: when strict_schema=False, unexpected
+    top-level surplus fields are losslessly absorbed into raw_payload and sensitive
+    fields are masked as '[REDACTED]'.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    _strict_schema_override: Optional[bool] = None
+
+    @classmethod
+    def set_strict_schema(cls, enabled: Optional[bool]) -> None:
+        cls._strict_schema_override = enabled
+
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_schema_tolerance(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        # Determine effective strict_schema setting
+        is_strict = getattr(config, "STRICT_SCHEMA", True)
+        if cls._strict_schema_override is not None:
+            is_strict = cls._strict_schema_override
+
+        if is_strict:
+            return data
+
+        known_fields = {
+            "schema_version",
+            "timestamp",
+            "client_ip",
+            "event_type",
+            "target_resource",
+            "status_code",
+            "severity",
+            "raw_payload",
+        }
+        extra_keys = [k for k in data.keys() if k not in known_fields]
+        if not extra_keys:
+            return data
+
+        data_copy = dict(data)
+        raw = data_copy.get("raw_payload")
+        if raw is None:
+            raw_dict: Dict[str, Any] = {}
+        elif isinstance(raw, dict):
+            raw_dict = dict(raw)
+        else:
+            raw_dict = {"_raw_message": raw}
+
+        extra_dict: Dict[str, Any] = {}
+        for k in extra_keys:
+            val = data_copy.pop(k)
+            raw_dict[k] = val
+            extra_dict[k] = val
+        raw_dict["_extra_fields"] = extra_dict
+
+        # Auto-mask sensitive absorbed fields using configured patterns
+        active_patterns = getattr(config, "REDACTION_PATTERNS", REDACTION_PATTERNS)
+        redacted_raw = redact_sensitive_data(raw_dict, patterns=active_patterns)
+        data_copy["raw_payload"] = redacted_raw
+        return data_copy
 
     schema_version: str = Field(
         default="1.0",
@@ -527,6 +589,28 @@ class WalLogBufferingMiddleware:
         """Flushes pending broker acknowledgment counts and in-memory metric deltas to SQLite."""
         self._flush_acked_counter()
         self.metrics_store.flush()
+
+    def check_health(self, timeout: float = 0.1) -> bool:
+        """
+        Lightweight deep healthcheck probe on WAL broker storage.
+        Verifies SQLite WAL write accessibility and lock status within the specified timeout.
+        """
+        if self.producer is not None and hasattr(self.producer, "check_health"):
+            return self.producer.check_health(timeout=timeout)
+        db_path = getattr(self.producer, "db_path", BROKER_DB_PATH) if self.producer else BROKER_DB_PATH
+        conn = sqlite3.connect(
+            db_path,
+            timeout=timeout,
+            isolation_level=None,
+            check_same_thread=True,
+        )
+        try:
+            conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)};")
+            conn.execute("BEGIN IMMEDIATE;")
+            conn.execute("ROLLBACK;")
+            return True
+        finally:
+            conn.close()
 
     def _delivery_poll_loop(self) -> None:
         """
@@ -1175,11 +1259,56 @@ v1_router = APIRouter(prefix="/v1")
 @v1_router.get("/health", status_code=status.HTTP_200_OK)
 @app.get("/health", status_code=status.HTTP_200_OK, deprecated=True)
 async def health_check() -> Dict[str, Any]:
-    """Liveness and readiness probe for Docker Compose and load balancers."""
+    """
+    Deep healthcheck probe for Docker Compose, GSLB/ALB, and container orchestrators.
+    Verifies SQLite WAL storage write capability and lock status within 0.1s.
+    """
     mw = _active_middleware()
+    if mw is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker WAL storage unhealthy or locked",
+        )
+
+    try:
+        if hasattr(mw, "check_health"):
+            mw.check_health(timeout=0.1)
+        elif mw.producer is not None and hasattr(mw.producer, "check_health"):
+            mw.producer.check_health(timeout=0.1)
+        else:
+            db_path = getattr(mw.producer, "db_path", BROKER_DB_PATH) if mw.producer else BROKER_DB_PATH
+            conn = sqlite3.connect(
+                db_path,
+                timeout=0.1,
+                isolation_level=None,
+                check_same_thread=True,
+            )
+            try:
+                conn.execute("PRAGMA busy_timeout = 100;")
+                conn.execute("BEGIN IMMEDIATE;")
+                conn.execute("ROLLBACK;")
+            finally:
+                conn.close()
+    except (sqlite3.OperationalError, sqlite3.DatabaseError, OSError) as exc:
+        logger.warning("Broker storage health check failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker WAL storage unhealthy or locked",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Unexpected error during health check: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Broker WAL storage unhealthy or locked",
+        ) from exc
+
     in_flight = len(mw.producer) if mw.producer else 0
     return {
         "status": "healthy",
+        "storage": "healthy",
+        "wal_writable": True,
         "topic": BROKER_TOPIC,
         "partitions": BROKER_PARTITIONS,
         "in_flight_producer_messages": in_flight,

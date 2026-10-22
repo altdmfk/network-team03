@@ -128,6 +128,9 @@ class PipelineSettings(BaseModel):
     # Structured Logging Configuration
     log_format: str = Field(default="text")
 
+    # Schema Tolerance Configuration
+    strict_schema: bool = Field(default=True)
+
     # Observability & OpenTelemetry Configuration
     consumer_metrics_port: int = Field(default=9100, ge=1, le=65535)
     otel_enabled: bool = Field(default=False)
@@ -385,6 +388,7 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "kill_chain_target_ip": source.get("KILL_CHAIN_TARGET_IP", "10.0.0.99"),
         "log_format": source.get("LOG_FORMAT", "text"),
         "consumer_metrics_port": int(source.get("CONSUMER_METRICS_PORT", "9100")),
+        "strict_schema": _parse_bool(source.get("STRICT_SCHEMA", "true")),
         "otel_enabled": _parse_bool(source.get("OTEL_ENABLED", "false")),
         "otel_sample_rate_normal": float(
             source.get("OTEL_SAMPLE_RATE_NORMAL", "0.01")
@@ -472,6 +476,7 @@ MAX_DELIVERY_RETRIES: int = SETTINGS.max_delivery_retries
 KILL_CHAIN_TARGET_IP: str = SETTINGS.kill_chain_target_ip
 EXPECTED_KILL_CHAIN: List[str] = list(SETTINGS.expected_kill_chain)
 LOG_FORMAT: str = SETTINGS.log_format
+STRICT_SCHEMA: bool = SETTINGS.strict_schema
 CONSUMER_METRICS_PORT: int = SETTINGS.consumer_metrics_port
 OTEL_ENABLED: bool = SETTINGS.otel_enabled
 OTEL_SAMPLE_RATE_NORMAL: float = SETTINGS.otel_sample_rate_normal

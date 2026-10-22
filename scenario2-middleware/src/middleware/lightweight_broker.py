@@ -401,6 +401,26 @@ class SQLiteBrokerStorage:
         if last_exc:
             raise last_exc
 
+    def check_health(self, timeout: float = 0.1) -> bool:
+        """
+        Lightweight deep healthcheck probe verifying WAL write capability and lock status.
+        Executes 'BEGIN IMMEDIATE; ROLLBACK;' with a strict busy timeout (default 0.1s).
+        Raises sqlite3.OperationalError or OSError if the database is locked, read-only, or unwritable.
+        """
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=timeout,
+            isolation_level=None,
+            check_same_thread=True,
+        )
+        try:
+            conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)};")
+            conn.execute("BEGIN IMMEDIATE;")
+            conn.execute("ROLLBACK;")
+            return True
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Initializes tables, metadata, and indexes if they do not exist."""
 
@@ -1144,6 +1164,24 @@ class LightweightProducer:
                 break
 
         return 0
+
+    def check_health(self, timeout: float = 0.1) -> bool:
+        """Lightweight deep healthcheck probe on underlying WAL broker storage."""
+        if self._storage is not None:
+            return self._storage.check_health(timeout=timeout)
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=timeout,
+            isolation_level=None,
+            check_same_thread=True,
+        )
+        try:
+            conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)};")
+            conn.execute("BEGIN IMMEDIATE;")
+            conn.execute("ROLLBACK;")
+            return True
+        finally:
+            conn.close()
 
     def _background_writer_loop(self) -> None:
         """Continuously batches in-memory items and writes them to SQLite in WAL mode."""
