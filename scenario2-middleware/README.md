@@ -170,7 +170,7 @@ python spike_test_demo.py --help
 별도의 외부 브로커 프로세스 없이도 내장된 경량 WAL 브로커를 통해 모든 단위, 통합, 결함 주입 및 보안 테스트를 로컬에서 즉시 실행할 수 있습니다.
 
 ```bash
-# 전체 137개 단위/통합/결함주입 테스트 실행
+# 전체 152개 단위/통합/결함주입 테스트 실행
 pytest -v
 ```
 
@@ -351,7 +351,9 @@ $$\text{Total Sent} = \text{Total Received} = \text{Total Forwarded} + \text{per
   3. [Stage 3] Lightweight WAL Broker Buffered  : 5,004 logs (Peak Queue Lag Buffered: 4,604 logs)
   4. [Stage 4] Consumer Worker Throttled Commit : 5,004 logs (Peak Outbound: 500 / Limit: 500 logs/sec, dlq_quarantined: 0)
   5. [Stage 5] Graylog GELF Server Stored       : 5,004 logs (Duplicates Deduped: 0, DLQ Replayed: 0)
-  • Honeytoken Priority Alert Latency           : 0.045s (Budget: < 2.0s) [PASS]
+  • Standard Lane E2E Latency (Throttled) : avg=4.82s | p95=9.21s | p99=9.78s | max=9.92s
+  • Priority Lane (Honeytoken) Latency    : 0.045s (Budget: < 2.0s) [PASS]
+  • Engineering Trade-off Summary         : SIEM 보호를 위해 일반 로그 지연시간(p99)을 의도적으로 평탄화(500 EPS)하되, 70:30 우선순위 레인으로 긴급 침해 경보 골든타임(< 2.0s)을 사수함.
 
 ================================================================================================================
  [PASS] SCENARIO 2 VERIFIED: 100% SPIKE BUFFERED & 0.0000% LOG LOSS
@@ -407,7 +409,7 @@ $$\text{Total Sent} = \text{Total Received} = \text{Total Forwarded} + \text{per
 
 ## 10. 알려진 한계점 및 프로덕션 전환 고려사항 (Known Limitations & Production Considerations)
 
-본 프로젝트는 경량 단일 호스트 Docker Compose 환경에서 스파이크 완충과 무손실 제어를 실증하도록 설계되었으며, 실제 엔터프라이즈 프로덕션 환경으로 확장할 때 다음 아키텍처 트레이드오프를 고려해야 합니다.
+본 프로젝트는 경량 단일 호스트 Docker Compose 환경에서 스파이크 완충과 무손실 제어를 실증하도록 설계되었으며, 실제 엔터프라이즈 프로덕션 환경으로 확장할 때 다음 아키텍처 트레이드오프와 운영 런북을 고려해야 합니다.
 
 1. **At-Least-Once 전송 모델과 하위 SIEM 중복 제거(`_event_id`)**:
    - 본 미들웨어는 **최소 1회 전송(At-Least-Once)** 파이프라인에 결정론적 멱등성 키(`_event_id = "{partition}:{offset}"`)를 결합한 구조입니다. 본 시스템은 Exactly-Once를 제공하지 않습니다.
@@ -430,3 +432,35 @@ $$\text{Total Sent} = \text{Total Received} = \text{Total Forwarded} + \text{per
    - [`src/middleware/retry_topic_consumer.py`](./src/middleware/retry_topic_consumer.py) 모듈과 테스트 스위트는 구현되어 있으나, [`docker-compose.yml`](./docker-compose.yml)에는 재시도 토픽 전용 컨슈머 서비스가 분리 등록되어 있지 않습니다. 현재 DLQ 관리는 관리자 API(`POST /v1/admin/dlq/replay`)를 통한 온디맨드 재전송을 기본 운영 방식으로 제공합니다.
 9. **OpenTelemetry 외부 트레이싱 백엔드 미번들**:
    - W3C `traceparent` 헤더 주입 및 추출, 인메모리 스팬 생성이 구현되어 있으나, 외부 OTLP/Jaeger 컬렉터로 트레이스를 전송하는 Exporter 설정은 번들되어 있지 않습니다.
+
+### 10.1 핵심 아키텍처 트레이드오프 및 프로덕션 운영 런북 (Architecture Trade-offs & Operations Runbook)
+
+엔터프라이즈 환경 상용 전환 시 요구되는 4대 핵심 아키텍처 방어 논리와 장애 복구 운영 런북은 다음과 같습니다:
+
+#### ① 단일 노드 SQLite WAL vs 분산 브로커 클러스터 (Lightweight Edge WAL vs Distributed Cluster)
+- **설계 의도 및 채택 배경**: Apache Kafka나 RabbitMQ 등 범용 분산 메시징 시스템은 최소 3대 이상의 브로커 노드 및 메타데이터 쿼럼(ZooKeeper/KRaft)을 요구하며, JVM 인스턴스당 최소 1GB 이상의 힙 메모리와 수 초 이상의 초기 구동 지연이 수반됩니다. 본 프로젝트는 엣지 및 제한된 온프레미스 자원 환경에서 추가 인프라 부하 없이 5,000+ EPS 버스트를 즉시 완충하기 위해 인프로세스 디스크 기반 **SQLite WAL(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`)**을 채택했습니다.
+- **단일 호스트 결속성 한계 및 확장 경로**: SQLite WAL은 단일 호스트 또는 공유 블록 스토리지에 결속되므로 노드 장애 시 스토리지 레벨 복제가 수반되지 않습니다. 그러나 본 미들웨어는 `confluent-kafka` 인터페이스 규격(`produce`, `poll`, `commit`, `TopicPartition`, `AdminClient`)을 100% 호환하는 추상화 계층([`LightweightProducer`](./src/middleware/lightweight_broker.py), [`LightweightConsumer`](./src/middleware/lightweight_broker.py))으로 구축되었으므로, 다중 물리 노드 수평 확장이 필요한 시점에는 애플리케이션 코드 수정 없이 설정 변경만으로 Apache Kafka 또는 Redpanda 클러스터로 무중단 드롭인 교체(Drop-in Replacement)가 가능합니다.
+
+#### ② 트래픽 평탄화(Traffic Shaping)와 Tail Latency(p99)의 등가교환 (Throughput Shaping vs Tail Latency Trade-off)
+- **의도된 지연시간 희생(Intentional Latency Sacrifice)**: 5,000 EPS의 공격성 트래픽 버스트를 하위 SIEM(Graylog/OpenSearch) 허용 한계인 500 EPS로 스로틀링할 때, 유입과 유출 간 10:1 속도 격차로 인해 브로커 큐 백로그가 누적되며 일반 로그의 꼬리 지연(Tail Latency p99)이 약 9~10초까지 상승합니다. 이는 시스템 결함이나 병목이 아니라, 하위 Graylog의 Elasticsearch Bulk Queue 포화 거절(HTTP 429) 및 OpenSearch JVM OOM Crash를 원천 방지하기 위해 지연시간을 대가로 인프라 생존성을 확보한 **'의도된 물리적 등가교환'**입니다.
+- **70:30 가중 우선순위 레인을 통한 골든타임 사수**: 이러한 지연시간 희생 속에서도 긴급 침해 사고 경보의 신속성을 보장하기 위해, 고위험 이벤트(`HONEYTOKEN_ACCESS`, Syslog severity $\le$ 2)는 즉시 격리된 우선순위 토픽(`security-logs.priority`)으로 라우팅됩니다. 컨슈머 워커는 70:30 가중 디스패치 알고리즘을 통해 5,000건의 일반 로그 백로그가 적체된 극한 상황에서도 허니토큰 경보를 `0.045s (Budget: < 2.0s)` 내에 SIEM으로 최우선 전송하여 관제 골든타임을 절대 사수합니다.
+
+#### ③ 비즈니스 서버 보호를 위한 Client-Side Fail-Open 원칙 (Client-Side Non-blocking & Double Defense)
+- **연쇄 장애(Cascading Failure) 방지**: 보안 로깅 미들웨어는 관제 보조 시스템이므로, 미들웨어에 장애(네트워크 단절, 디스크 풀, 503 과부하)가 발생하더라도 메인 비즈니스 서버(Flask API)나 IoT 제어 보드(ESP32)의 본연의 기능이 절대 멈추거나 블로킹되어서는 안 됩니다.
+- **2계층 방어 구조(Two-Tier Defense Architecture)**:
+  1. **클라이언트 계층 ([`SafeSecurityLogClient`](./simulators/client_integration_snippet.py))**: 인메모리 유계 큐(`queue.Queue(maxsize=1000)`) 기반 비동기 데몬 스레드로 비즈니스 호출 스레드는 `0ms` 만에 즉시 반환됩니다. 연속 전송 실패(`failure_threshold=3`) 시 서킷을 `OPEN`(`recovery_timeout=10.0s`)하여 불필요한 네트워크 지연을 차단하고, 큐 포화 또는 전송 실패 시 로컬 파일(`client_fallback_logs.jsonl`)에 JSONL로 즉시 Append하는 **100% Fail-Open 계약**을 보장합니다.
+  2. **수집기 계층 ([`ingestor.py`](./src/ingestor.py) Deep Healthcheck)**: `/v1/health`에서 `0.1s` 타임아웃의 SQLite WAL 쓰기 락 프로브(`BEGIN IMMEDIATE; ROLLBACK;`)를 수행하여 디스크 풀이나 영구 락 감지 시 즉시 RFC 7807 **`HTTP 503 Service Unavailable`**을 반환합니다. 이를 통해 상위 로드밸런서(GSLB/ALB)가 결함 노드로의 트래픽 라우팅을 즉각 중단하고 정상 노드로 우회시키도록 유도합니다.
+
+#### ④ Active-Standby 페일오버 및 지연 드레인(Delayed Drain) 런북 (Failover & Delayed Drain Operations Runbook)
+Active 노드의 물리적 하드웨어 고장이나 전원 차단으로 비정상 종료가 발생했을 때, 로컬 SQLite WAL(`broker_wal.db`)에 잔존하는 미전송 데이터를 데이터 유실 없이 회수하는 표준 복구 절차(Runbook)는 다음과 같습니다:
+
+1. **실시간 트래픽 즉시 우회 (Failover)**:
+   - Active 노드의 `/v1/health`가 503 또는 타임아웃을 반환하면 상위 로드밸런서(GSLB/ALB)가 즉시 Standby 노드로 실시간 인제스트 트래픽을 자동 절체(Failover)합니다.
+2. **구 Active 노드 '드레인 전용 컨슈머 모드' 기동 (Isolated Drain Phase)**:
+   - 복구된 구 Active 노드는 신규 수집을 받지 않도록 HTTP Ingestor를 비활성화(`INGEST_RATE_LIMIT_RPS=0` 또는 인제스터 프로세스 미기동)하고, **컨슈머 워커(`consumer_worker.py`)만 단독 가동**합니다.
+3. **잔여 WAL 데이터 사후 병합 (Reconciliation & Zero Loss)**:
+   - 컨슈머 워커가 구 Active 노드의 로컬 `broker_wal.db`에 남아있던 미전송 잔여 큐(Lag)를 읽어 하위 Graylog/OpenSearch로 500 EPS 속도로 안전하게 드레인(Delayed Drain)합니다.
+4. **결정론적 `_event_id` 기반 멱등 중복 제거**:
+   - 페일오버 전후 경계 시점에 중복 발행된 레코드가 존재하더라도, 모든 메시지에는 브로커 파티션과 오프셋 기반의 고유 식별자(`_event_id = "{partition}:{offset}"`)가 각인되어 있으므로 SIEM 수신단에서 무손실 멱등 처리가 완료됩니다.
+5. **정상 Active 복귀 또는 Standby 대기**:
+   - 잔여 큐가 `0`으로 완전 소진된 것을 확인한 후, 인제스터를 재가동하여 클러스터의 Standby 노드로 대기 편성합니다.
