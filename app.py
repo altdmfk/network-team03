@@ -39,8 +39,19 @@ SUSPICIOUS_USER_AGENT_WORDS = ("kali", "sqlmap", "nikto", "masscan")
 LOG_FILE = Path(
     os.getenv("SECURITY_LOG_FILE", Path(__file__).with_name("security_events.jsonl"))
 )
-MIDDLEWARE_INGEST_URL = os.getenv("MIDDLEWARE_INGEST_URL", "")
+MIDDLEWARE_INGEST_URL = os.getenv(
+    "MIDDLEWARE_INGEST_URL", "http://localhost:8000/ingest"
+)
+MIDDLEWARE_API_KEY = os.getenv("MIDDLEWARE_API_KEY", "")
 MIDDLEWARE_TIMEOUT_SECONDS = float(os.getenv("MIDDLEWARE_TIMEOUT_SECONDS", "0.5"))
+
+EVENT_SEVERITY = {
+    "api_request_allowed": 6,
+    "authentication_failed": 4,
+    "api_request_rate_limited": 4,
+    "api_key_compromised": 1,
+    "api_response_completed": 6,
+}
 
 
 def utc_timestamp():
@@ -53,15 +64,39 @@ def client_ip():
 
 
 def _forward_to_middleware(event):
-    """Forward one event to Middleware when an ingest URL is configured."""
+    """Forward one event to Middleware using its standard ingest schema."""
     if not MIDDLEWARE_INGEST_URL:
         return False
 
-    body = json.dumps(event, ensure_ascii=False).encode("utf-8")
+    middleware_fields = {
+        "schema_version": "1.0",
+        "timestamp": event["timestamp"],
+        "client_ip": event["client_ip"],
+        "event_type": event["event_type"],
+        "target_resource": event["target_resource"],
+        "status_code": event["status_code"],
+        "severity": EVENT_SEVERITY.get(event["event_type"], 4),
+        "raw_payload": {
+            key: value
+            for key, value in event.items()
+            if key
+            not in {
+                "timestamp",
+                "client_ip",
+                "event_type",
+                "target_resource",
+                "status_code",
+            }
+        },
+    }
+    body = json.dumps(middleware_fields, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if MIDDLEWARE_API_KEY:
+        headers["X-API-Key"] = MIDDLEWARE_API_KEY
     http_request = Request(
         MIDDLEWARE_INGEST_URL,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -331,4 +366,5 @@ def automation_revoke_key():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    # Dockerized n8n reaches the host API through host.docker.internal.
+    app.run(host="0.0.0.0", port=5000, debug=False)

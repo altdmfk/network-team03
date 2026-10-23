@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch
 
 import app as api_app
@@ -17,6 +18,7 @@ class MainApiServerTest(unittest.TestCase):
         api_app.INCIDENTS.clear()
         api_app.BLOCKED_IPS.clear()
         api_app.MIDDLEWARE_INGEST_URL = ""
+        api_app.MIDDLEWARE_API_KEY = ""
         self.client = api_app.app.test_client()
 
     def test_health(self):
@@ -77,6 +79,39 @@ class MainApiServerTest(unittest.TestCase):
         forward.assert_called_once()
         forwarded_event = forward.call_args.args[0]
         self.assertEqual(forwarded_event["event_type"], "api_request_allowed")
+
+    def test_middleware_payload_uses_ingest_schema_and_api_key_header(self):
+        api_app.MIDDLEWARE_INGEST_URL = "http://middleware.test/v1/ingest"
+        api_app.MIDDLEWARE_API_KEY = "middleware-demo-key"
+        captured = {}
+
+        class FakeResponse:
+            status = 202
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        def fake_urlopen(http_request, timeout):
+            captured["request"] = http_request
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with patch.object(api_app, "urlopen", side_effect=fake_urlopen):
+            self.client.get(
+                "/api/data",
+                headers={"X-API-Key": "test-key-01"},
+            )
+
+        request_body = json.loads(captured["request"].data.decode("utf-8"))
+        self.assertEqual(captured["request"].full_url, "http://middleware.test/v1/ingest")
+        self.assertEqual(captured["request"].get_header("X-api-key"), "middleware-demo-key")
+        self.assertEqual(request_body["schema_version"], "1.0")
+        self.assertEqual(request_body["severity"], 6)
+        self.assertEqual(request_body["raw_payload"]["api_key_id"], "test-key-01")
+        self.assertNotIn("api_key_id", request_body)
 
     def test_n8n_webhook_revokes_key_and_blocks_ip(self):
         response = self.client.post(
