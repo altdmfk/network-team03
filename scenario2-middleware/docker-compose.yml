@@ -1,27 +1,28 @@
 services:
-  mock-graylog:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: soar-mock-graylog
-    hostname: mock-graylog
-    restart: unless-stopped
-    mem_limit: 256m
-    command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", "12201", "--workers", "1"]
-    ports:
-      - "12201:12201"
-    environment:
-      MOCK_GRAYLOG_HOST: "0.0.0.0"
-      MOCK_GRAYLOG_PORT: "12201"
-      KILL_CHAIN_TARGET_IP: "10.0.0.99"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:12201/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    networks:
-      - soar-siem-net
+# services:
+#   mock-graylog:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     container_name: soar-mock-graylog
+#     hostname: mock-graylog
+#     restart: unless-stopped
+#     mem_limit: 256m
+#     command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", "12201", "--workers", "1"]
+#     ports:
+#       - "12201:12201"
+#     environment:
+#       MOCK_GRAYLOG_HOST: "0.0.0.0"
+#       MOCK_GRAYLOG_PORT: "12201"
+#       KILL_CHAIN_TARGET_IP: "10.0.0.99"
+#     healthcheck:
+#       test: ["CMD", "curl", "-f", "http://localhost:12201/health"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#       start_period: 5s
+#     networks:
+#       - soar-siem-net
 
   ingestor:
     build:
@@ -80,7 +81,7 @@ services:
       BROKER_PRIORITY_TOPIC: "security-logs.priority"
       STANDARD_RESERVED_SHARE: "0.3"
       BROKER_CONSUMER_GROUP: "graylog-shipper-group"
-      GRAYLOG_GELF_URL: "http://mock-graylog:12201/gelf"
+      GRAYLOG_GELF_URL: "http://host.docker.internal:12201/gelf"
       GELF_HOST: "security-middleware"
       DRY_RUN_GRAYLOG_MOCK: "false"
       METRICS_DB_PATH: "/app/state/metrics.db"
@@ -100,9 +101,9 @@ services:
       MAX_DELIVERY_RETRIES: "0"
     volumes:
       - metrics-state:/app/state
-    depends_on:
-      mock-graylog:
-        condition: service_healthy
+    # depends_on:
+    #   mock-graylog:
+    #     condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import os; assert os.path.exists('/proc/1/cmdline') and b'consumer_worker.py' in open('/proc/1/cmdline', 'rb').read()\""]
       interval: 10s

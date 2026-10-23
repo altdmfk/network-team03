@@ -4,6 +4,86 @@
 
 ---
 
+## ⚡ 빠른 시작: Graylog 연동 및 엔드투엔드 테스트 가이드
+
+실제 실행 중인 Graylog에 로그를 안전하게 버퍼링하여 전달하는 전체 절차입니다.
+
+### 1. Graylog 설정 (GELF HTTP Input)
+1. Graylog 웹 콘솔(`http://localhost:9000`)에 접속하여 로그인합니다.
+2. 상단 메뉴 **System** > **Inputs** 로 이동합니다.
+3. 드롭다운에서 **`GELF HTTP`** 선택 후 **Launch new input** 버튼을 클릭합니다.
+   - **Title**: `Middleware GELF Ingest`
+   - **Port**: `12201`
+   - **Bind address**: `0.0.0.0`
+4. **Save**를 누르고 Input 상태가 **`RUNNING`**인지 확인합니다.
+
+---
+
+### 2. 미들웨어 도커 실행 (실제 Graylog 모드)
+`docker-compose.yml`은 호스트의 Graylog(`http://host.docker.internal:12201/gelf`)로 전달하도록 기본 설정되어 있습니다.
+
+```powershell
+# scenario2-middleware 디렉토리로 이동
+cd scenario2-middleware
+
+# 미들웨어 컨테이너 빌드 및 기동
+docker compose up -d --build
+
+# 컨테이너 상태 확인 (ingestor 및 consumer-worker가 healthy인지 확인)
+docker compose ps
+```
+
+> **단독 Mock Graylog 테스트가 필요한 경우**:
+> 실제 Graylog 없이 가짜 서버로 테스트할 때는 다음 명령어를 실행합니다.
+> ```powershell
+> docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d --build
+> ```
+
+---
+
+### 3. 테스트 로그 전송 (PowerShell)
+미들웨어 비동기 수집기(Ingestor, 포트 8000)로 `api_key_compromised` 보안 로그 1건을 전송합니다:
+
+```powershell
+# 한글 인코딩 깨짐 방지를 위해 UTF-8 바이트로 전송
+$body = [System.Text.Encoding]::UTF8.GetBytes('{
+  "client_ip": "192.168.1.100",
+  "event_type": "api_key_compromised",
+  "target_resource": "/api/v1/auth",
+  "status_code": 401,
+  "severity": 1,
+  "raw_payload": {
+    "message": "Graylog 연동 검증 테스트 로그",
+    "user_agent": "TestClient"
+  }
+}')
+
+Invoke-RestMethod -Uri "http://localhost:8000/ingest" -Method Post `
+  -Headers @{ "X-API-Key" = "prod-ingest-key-1" } `
+  -ContentType "application/json; charset=utf-8" `
+  -Body $body
+```
+*응답 예시: `{"status":"queued","event_id":"...","priority":true}`*
+
+---
+
+### 4. Graylog 화면에서 확인
+1. Graylog 상단 메뉴 **Search** 클릭
+2. 검색 필터 우측 조회 범위를 **`Search in all messages`** 또는 **`Last 5 minutes`**로 지정
+3. 검색창에 아래 쿼리 중 하나를 입력하여 검색:
+   ```text
+   _event_type: "api_key_compromised"
+   ```
+   또는
+   ```text
+   source: "security-middleware"
+   ```
+4. 메시지 목록에서 수신된 로그(`Graylog 연동 검증 테스트 로그`)를 확인합니다.
+
+---
+
+---
+
 ## 1. 핵심 설계 목표 (Core Objectives)
 
 1. **대규모 로그 스파이크 완충 및 스로틀링 제어 (Infrastructure Stability)**
@@ -135,9 +215,16 @@ flowchart LR
 
 ### 4.1 Docker Compose 기반 파이프라인 구동
 
+기본 설정은 **실제 Graylog(호스트 `12201` 포트)**로 전송하도록 구성되어 있습니다.
+
 ```bash
-# 전체 컨테이너 빌드 및 백그라운드 구동 (Ingestor + Consumer Worker + Mock Graylog, 외부 브로커 불필요)
+# 1. 실제 Graylog 연동 모드로 구동 (기본값)
+# 호스트의 실제 Graylog(http://host.docker.internal:12201/gelf)로 전달됩니다.
 docker compose up -d --build
+
+# 2. 자체 Mock Graylog 모드로 구동 (실제 Graylog 없이 단독 테스트할 때)
+# 12201 포트의 Mock Graylog 컨테이너를 함께 띄워 테스트합니다.
+docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d --build
 
 # 개발/데모 환경 실행 (인증 비활성화 및 높은 수집 한도 적용)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
