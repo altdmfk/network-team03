@@ -19,6 +19,9 @@
 | `controllers/seclog.py` | security.log에 `honeytoken_used` 기록 |
 | `wazuh/scenario1_decoder.xml`, `wazuh/scenario1_rules.xml` | Wazuh 디코더·룰(100500) |
 | `n8n/scenario1_honeytoken.json` | n8n 대응 워크플로우 (토큰·키는 `YOUR_...`로 비워둠) |
+| `controllers/admin_controller.py` | 허니토큰 현황·생성·회수 API, 가짜 관리자 키 탐지 |
+| `controllers/page_controller.py` | 관리자 페이지에 가짜 관리자 키 심기 |
+| `templates/admin.html` | 관리 콘솔 "허니토큰(미끼) 관리" 섹션 (10초 자동 갱신) |
 
 ## 설정 순서
 
@@ -77,6 +80,10 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/auth/login -Conten
 # 3) 재접속 → 403 (차단된 IP)
 ```
 차단 해제: `POST /api/admin/unblock` + 헤더 `X-API-Key`, 본문 `{"ip":"127.0.0.1"}`
+
+### 관리 콘솔
+관리자로 로그인 → `/admin` → "허니토큰(미끼) 관리"에서 미끼 계정·관리자 키를 심고 회수할 수 있습니다.
+가짜 관리자 키는 관리자 페이지 소스 주석에 숨겨져 있으며, 이 키로 관리자 API를 호출하면 401 위장 응답과 함께 탐지·차단됩니다.
 
 ## 시험 결과 (2026-10-22)
 
