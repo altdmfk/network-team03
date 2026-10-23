@@ -1,0 +1,10 @@
+<!-- 시나리오1 허니토큰 룰 — 번호대 1005xx 사용 -->
+<group name="honeytoken,deception,local,">
+  <!-- 미끼는 정상 사용이 0건 → frequency 없이 1회 즉시 최고 레벨 -->
+  <rule id="100500" level="15">
+    <decoded_as>honeytoken</decoded_as>
+    <description>허니토큰 사용 감지: $(token_id) 미끼 계정 $(dstuser), 출발지 $(srcip)</description>
+    <mitre><id>T1078</id></mitre>
+    <group>honeytoken,</group>
+  </rule>
+</group>
