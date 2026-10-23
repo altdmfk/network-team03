@@ -1,0 +1,330 @@
+{
+  "name": "시나리오1 허니토큰 대응",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "honeytoken",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -960,
+        176
+      ],
+      "id": "59468100-1980-4838-ba5d-b5b493c2293d",
+      "name": "Webhook",
+      "webhookId": "f7181570-fc85-4085-944e-da50dd3844fa"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_DISCORD_WEBHOOK_URL",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (n8n-lab)"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -96,
+        176
+      ],
+      "id": "1f1cdb0b-416a-409d-8011-90dc823945fb",
+      "name": "디스코드"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_SLACK_WEBHOOK_URL",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -96,
+        -16
+      ],
+      "id": "4af6cdf3-3305-4742-bc35-09dff96cf8c6",
+      "name": "슬랙",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_TELEGRAM_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "=YOUR_TELEGRAM_CHAT_ID"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -96,
+        384
+      ],
+      "id": "7cc7c9ab-217c-42da-9b51-1ebe6c58185f",
+      "name": "텔레그램"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 시나리오1: Graylog 허니토큰 이벤트 → IP 차단 요청 데이터\nconst b = $json.body ?? $json;\nif (!b.src_ip) return [];   // IP가 없으면 차단할 수 없으니 중단\n\nreturn [{ json: {\n  ip: b.src_ip,\n  src_ip: b.src_ip,\n  token_id: b.token_id,\n  placement: b.placement,\n  username: b.username,\n  detected_at: b.timestamp,\n  reason: `허니토큰 ${b.token_id}(${b.username}) 사용 — 즉시 차단`,\n  severity: 'Critical',\n  student: 'team3-s1',\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        176
+      ],
+      "id": "dc2f7870-225b-420b-b9e3-bc340a3d5520",
+      "name": "판정(잠금)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/admin/block",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_ADMIN_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -672,
+        176
+      ],
+      "id": "44e8d4c9-3dd2-4755-81d2-13ba8ac11e67",
+      "name": "IP 차단"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1a50a29b-437a-4500-a261-f5863615e218",
+              "name": "text",
+              "value": "=   🍯 [허니토큰 탐지] 미끼 {{ $('판정(잠금)').item.json.token_id }}({{ $('판정(잠금)').item.json.username }}) 사용 → 공격 IP {{ $json.ip }} 즉시 차단 / 심은 위치: {{ $('판정(잠금)').item.json.placement }} / 탐지 시각: {{ $('판정(잠금)').item.json.detected_at }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -288,
+        176
+      ],
+      "id": "2fffd545-43ee-4be7-a459-cf2ef4872c81",
+      "name": "메시지(잠금)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ed6c9721-bb17-404a-8fa8-3db530945468",
+              "leftValue": "={{ $json.changed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -496,
+        176
+      ],
+      "id": "78b3e2a3-9d85-4d58-afab-199b0733ef85",
+      "name": "새로 차단됐나?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/api/admin/incident",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_ADMIN_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=   {\n     \"src_ip\": \"{{ $json.ip }}\",\n     \"title\": \"허니토큰 사용: {{ $('판정(잠금)').item.json.token_id }} ({{ $('판정(잠금)').item.json.username }})\",\n     \"severity\": \"Critical\",\n     \"student\": \"team3-s1\"\n   }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -288,
+        -16
+      ],
+      "id": "c626e9ba-396b-4dc7-a326-48e9b2cf5f12",
+      "name": "인시던트 티켓"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "body": {
+            "event_type": "honeytoken_used",
+            "src_ip": "127.0.0.1",
+            "token_id": "HT-001",
+            "placement": "users_table",
+            "username": "backup_admin",
+            "timestamp": "2026-10-20T08:28:01.160Z",
+            "title": "S1 Honeytoken used"
+          }
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "판정(잠금)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "판정(잠금)": {
+      "main": [
+        [
+          {
+            "node": "IP 차단",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IP 차단": {
+      "main": [
+        [
+          {
+            "node": "새로 차단됐나?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "메시지(잠금)": {
+      "main": [
+        [
+          {
+            "node": "슬랙",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "디스코드",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "텔레그램",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새로 차단됐나?": {
+      "main": [
+        [
+          {
+            "node": "인시던트 티켓",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "메시지(잠금)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4d0ed526-87f2-48a8-982a-8bbc611317f4",
+  "meta": {},
+  "nodeGroups": [],
+  "id": "xGIeVQf7dFbmwBOi",
+  "tags": []
+}

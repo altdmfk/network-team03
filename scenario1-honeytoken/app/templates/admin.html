@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    {% if decoy_key %}<!-- [운영 메모] 회수봇 백업용 관리자 API 키 (X-API-Key): {{ decoy_key }} / 분기마다 교체 -->{% endif %}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>관리자 — 회원 권한(인가) 관리</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen flex flex-col">
+
+    {% include 'partials/_nav.html' %}
+
+    <main class="max-w-4xl mx-auto px-4 py-6 flex-1 w-full">
+        <h2 class="text-2xl font-bold mb-1">🔐 관리자 — 회원 권한(인가) 관리</h2>
+        <p class="text-sm text-gray-500 mb-6">RBAC 등급(user/gold/admin) 부여·회수. admin 계정으로 로그인해야 합니다.</p>
+
+        <div id="denied-view" class="hidden bg-white rounded-xl shadow-sm p-8 text-center text-gray-500">
+            <p class="text-lg font-medium mb-1">🚫 접근 권한이 없습니다</p>
+            <p class="text-sm">이 페이지는 <strong>관리자(admin)</strong> 등급만 볼 수 있어요. (현재: <span id="denied-role">-</span>)</p>
+        </div>
+
+        <div id="admin-view" class="hidden space-y-6">
+            <!-- 권한 부여 -->
+            <section class="bg-white rounded-xl shadow-sm p-5">
+                <h3 class="font-bold mb-1">권한 부여(인가)</h3>
+                <p class="text-xs text-gray-500 mb-3">등급은 계단식입니다 — user &lt; gold &lt; admin. gold 를 준 그 회원은 골드 화면(/gold)도 볼 수 있습니다.</p>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input id="grant-username" type="text" placeholder="대상 아이디"
+                           class="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <select id="grant-role" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="user">일반(user)</option>
+                        <option value="gold" selected>골드(gold)</option>
+                        <option value="admin">관리자(admin) — ⚠️ 꼭 필요한 담당자만</option>
+                    </select>
+                    <input id="grant-reason" type="text" placeholder="사유(선택)"
+                           class="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button onclick="grantRole()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition">부여</button>
+                </div>
+                <p id="grant-msg" class="text-xs mt-2"></p>
+            </section>
+
+            <!-- 정책 위반 -->
+            <section class="bg-white rounded-xl shadow-sm p-5">
+                <div class="flex justify-between items-center mb-1">
+                    <h3 class="font-bold">정책 위반 — 허용목록 밖 admin</h3>
+                    <button onclick="loadViolations()" class="text-xs text-indigo-600 hover:underline shrink-0">조회</button>
+                </div>
+                <p class="text-xs text-gray-500 mb-3 leading-relaxed">회수봇이 자동으로 신고·회수한 기록이에요.</p>
+                <div id="violations-list" class="text-sm text-gray-500">아직 조회하지 않았습니다.</div>
+            </section>
+
+            <!-- 시나리오1: 허니토큰(미끼) 관리 -->
+            <section class="bg-white rounded-xl shadow-sm p-5">
+                <div class="flex justify-between items-center mb-1">
+                    <h3 class="font-bold">🍯 허니토큰(미끼) 관리</h3>
+                    <div class="flex items-center gap-2 text-xs">
+                        <span id="ht-updated" class="text-gray-400"></span>
+                        <button onclick="loadHoneytokens()" class="px-2 py-1 rounded bg-white border border-gray-300 hover:bg-gray-100">새로고침</button>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mb-3 leading-relaxed">정상 사용자는 쓰지 않는 미끼입니다. 쓰이는 순간 공격 IP가 자동 차단되고 메신저로 알림이 갑니다. 10초마다 자동으로 새로고침됩니다.</p>
+
+                <div id="ht-summary" class="flex flex-wrap gap-2 text-xs mb-3"></div>
+
+                <div class="flex flex-col sm:flex-row gap-2 mb-1">
+                    <select id="ht-type" onchange="onHtTypeChange()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="account">미끼 계정 (DB)</option>
+                        <option value="api_key">가짜 관리자 키 (관리 콘솔)</option>
+                    </select>
+                    <input id="ht-username" type="text" placeholder="미끼 계정명 (예: sys_ops)"
+                           class="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button onclick="createHoneytoken()" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 transition">미끼 심기</button>
+                </div>
+                <p id="ht-msg" class="text-xs mb-3"></p>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-400 border-b border-gray-100">
+                            <tr>
+                                <th class="py-2 pr-2 font-medium">번호</th>
+                                <th class="py-2 pr-2 font-medium">종류</th>
+                                <th class="py-2 pr-2 font-medium">값</th>
+                                <th class="py-2 pr-2 font-medium">심은 위치</th>
+                                <th class="py-2 pr-2 font-medium">상태</th>
+                                <th class="py-2 pr-2 font-medium">처음 사용</th>
+                                <th class="py-2 font-medium"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="ht-tbody"><tr><td colspan="7" class="py-3 text-gray-400">불러오는 중…</td></tr></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 인시던트 티켓 -->
+            <section class="bg-white rounded-xl shadow-sm p-5">
+                <div class="flex justify-between items-center mb-1">
+                    <h3 class="font-bold">🎫 인시던트 티켓</h3>
+                    <div class="flex gap-1 text-xs">
+                        <button data-status="open" class="incident-filter-btn px-2 py-1 rounded bg-indigo-600 text-white">열림</button>
+                        <button data-status="closed" class="incident-filter-btn px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">닫힘</button>
+                        <button data-status="" class="incident-filter-btn px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">전체</button>
+                        <button onclick="loadIncidents()" class="px-2 py-1 rounded bg-white border border-gray-300 hover:bg-gray-100">새로고침</button>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mb-3 leading-relaxed">출발지(src_ip) 기준으로 취합된 보안 사건 — n8n(Graylog 연동)이 자동 생성합니다.</p>
+                <div id="incidents-list" class="space-y-2 text-sm text-gray-500">아직 조회하지 않았습니다.</div>
+            </section>
+
+            <!-- 회원 목록 -->
+            <section class="bg-white rounded-xl shadow-sm p-5">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-bold">회원 목록</h3>
+                    <button onclick="loadUsers()" class="bg-white border border-gray-300 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-100">새로고침</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-gray-500 border-b border-gray-100">
+                            <tr>
+                                <th class="py-2 pr-2">#</th>
+                                <th class="py-2 pr-2">아이디</th>
+                                <th class="py-2 pr-2">역할</th>
+                                <th class="py-2 pr-2">부여자</th>
+                                <th class="py-2 pr-2">부여시각</th>
+                                <th class="py-2 pr-2">사유</th>
+                                <th class="py-2 pr-2">회수</th>
+                                <th class="py-2">삭제</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        const token = localStorage.getItem('token');
+        const ROLE_BADGE = {
+            user: 'bg-gray-100 text-gray-600',
+            gold: 'bg-amber-100 text-amber-700',
+            admin: 'bg-red-100 text-red-600',
+        };
+
+        async function init() {
+            if (!token) return showDenied('로그인 안 됨');
+            const res = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!res.ok) return showDenied('로그인 안 됨');
+            const me = await res.json();
+            if (!me.is_admin) return showDenied(me.role_label);
+
+            document.getElementById('admin-view').classList.remove('hidden');
+            loadUsers();
+            loadIncidents();
+            loadHoneytokens();
+            setInterval(loadHoneytokens, 10000);   // 10초마다 자동 새로고침 — 미끼가 쓰이면 화면에서 바로 보인다
+        }
+
+        function showDenied(role) {
+            document.getElementById('denied-role').innerText = role;
+            document.getElementById('denied-view').classList.remove('hidden');
+        }
+
+        async function loadUsers() {
+            const res = await fetch('/api/admin/users', { headers: { 'Authorization': `Bearer ${token}` } });
+            const data = await res.json();
+            const tbody = document.getElementById('users-tbody');
+            tbody.innerHTML = '';
+            (data.users || []).forEach(u => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b border-gray-50';
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-gray-400">${u.id}</td>
+                    <td class="py-2 pr-2 font-medium">${escapeHtml(u.username)}</td>
+                    <td class="py-2 pr-2"><span class="text-xs px-2 py-0.5 rounded-full ${ROLE_BADGE[u.role] || ''}">${u.role_label}</span></td>
+                    <td class="py-2 pr-2 text-gray-500">${escapeHtml(u.role_granted_by || '-')}</td>
+                    <td class="py-2 pr-2 text-gray-400 text-xs">${u.role_granted_at ? u.role_granted_at.slice(0, 16).replace('T', ' ') : '-'}</td>
+                    <td class="py-2 pr-2 text-gray-500">${escapeHtml(u.role_reason || '-')}</td>
+                    <td class="py-2 pr-2">
+                        ${u.role !== 'user' ? `<button onclick="revokeRole('${escapeAttr(u.username)}')" class="text-xs text-red-500 hover:underline">회수</button>` : '<span class="text-gray-300">-</span>'}
+                    </td>
+                    <td class="py-2">
+                        <button onclick="deleteUser(${u.id}, '${escapeAttr(u.username)}')" class="text-xs text-gray-400 hover:text-red-600 hover:underline">삭제</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function grantRole() {
+            const username = document.getElementById('grant-username').value.trim();
+            const role = document.getElementById('grant-role').value;
+            const reason = document.getElementById('grant-reason').value.trim();
+            const msg = document.getElementById('grant-msg');
+            if (!username) { msg.textContent = '아이디를 입력하세요.'; msg.className = 'text-xs mt-2 text-red-500'; return; }
+
+            const res = await fetch('/api/admin/grant', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ username, role, reason, granted_by: localStorage.getItem('username') }),
+            });
+            const data = await res.json();
+            msg.textContent = res.ok ? `${data.username}: ${data.old_role} → ${data.new_role}` : (data.msg || '오류');
+            msg.className = res.ok ? 'text-xs mt-2 text-emerald-600' : 'text-xs mt-2 text-red-500';
+            if (res.ok) { document.getElementById('grant-username').value = ''; loadUsers(); }
+        }
+
+        async function revokeRole(username) {
+            if (!confirm(`${username} 을(를) 일반(user) 등급으로 회수할까요?`)) return;
+            const res = await fetch('/api/admin/revoke', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ username, granted_by: localStorage.getItem('username'), reason: '관리자 수동 회수' }),
+            });
+            if (res.ok) loadUsers(); else alert('회수 실패');
+        }
+
+        async function deleteUser(id, username) {
+            if (!confirm(`정말 '${username}' 회원을 삭제하시겠습니까?`)) return;
+            const res = await fetch(`/api/admin/users/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            const data = await res.json();
+            if (res.ok) { loadUsers(); } else { alert(data.msg || '삭제 실패'); }
+        }
+
+        async function loadViolations() {
+            const res = await fetch('/api/admin/violations', { headers: { 'Authorization': `Bearer ${token}` } });
+            const box = document.getElementById('violations-list');
+            if (!res.ok) { box.innerHTML = '<span class="text-red-500">조회 실패</span>'; return; }
+            const data = await res.json();
+            if (!data.violations || data.violations.length === 0) {
+                box.innerHTML = '아직 기록이 없습니다.';
+                return;
+            }
+            box.innerHTML = data.violations.map(v => `
+                <div class="border-b border-gray-50 py-2 text-xs flex justify-between">
+                    <span>#${v.id} <strong>${escapeHtml(v.username || '-')}</strong> — ${escapeHtml(v.reason || '')}</span>
+                    <span class="text-gray-400">${v.created_at ? v.created_at.slice(0, 16).replace('T', ' ') : ''}</span>
+                </div>
+            `).join('');
+        }
+
+        let currentIncidentStatus = 'open';
+        const SEV_COLOR = { Critical: 'bg-red-100 text-red-700', High: 'bg-orange-100 text-orange-700', Medium: 'bg-amber-100 text-amber-700', Low: 'bg-gray-100 text-gray-600' };
+
+        async function loadIncidents() {
+            const qs = currentIncidentStatus ? `?status=${currentIncidentStatus}` : '';
+            const res = await fetch(`/api/admin/incidents${qs}`, { headers: { 'Authorization': `Bearer ${token}` } });
+            const box = document.getElementById('incidents-list');
+            if (!res.ok) { box.innerHTML = '<span class="text-red-500">조회 실패</span>'; return; }
+            const data = await res.json();
+            if (!data.incidents || data.incidents.length === 0) {
+                box.innerHTML = '기록이 없습니다.';
+                return;
+            }
+            box.innerHTML = data.incidents.map(t => `
+                <div class="border border-gray-100 rounded-lg p-3">
+                    <div class="flex justify-between items-start gap-2">
+                        <div>
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium ${SEV_COLOR[t.severity] || SEV_COLOR.Low}">${escapeHtml(t.severity)}</span>
+                            <span class="text-xs px-2 py-0.5 rounded-full ${t.status === 'open' ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-500'}">${t.status === 'open' ? '열림' : '닫힘'}</span>
+                            <span class="font-medium ml-1">#${t.id} ${escapeHtml(t.title)}</span>
+                        </div>
+                        ${t.status === 'open' ? `<button onclick="closeIncident(${t.id})" class="text-xs text-indigo-600 hover:underline shrink-0">종료</button>` : ''}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">출발지 ${escapeHtml(t.src_ip)} · 이벤트 ${t.event_count}건 · 조치 ${escapeHtml(t.actions || '없음')} · ${t.created_at ? t.created_at.slice(0, 16).replace('T', ' ') : ''}</div>
+                </div>
+            `).join('');
+        }
+
+        async function closeIncident(id) {
+            const res = await fetch('/api/admin/incident/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ id }),
+            });
+            if (res.ok) loadIncidents(); else alert('종료 실패');
+        }
+
+        document.querySelectorAll('.incident-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentIncidentStatus = btn.dataset.status;
+                document.querySelectorAll('.incident-filter-btn').forEach(b => {
+                    b.className = 'incident-filter-btn px-2 py-1 rounded ' +
+                        (b === btn ? 'bg-indigo-600 text-white' : 'bg-gray-100 hover:bg-gray-200');
+                });
+                loadIncidents();
+            });
+        });
+
+        // ── 시나리오1: 허니토큰(미끼) 관리 ──
+        const HT_STATUS = {
+            active:  { label: '대기',   cls: 'bg-green-100 text-green-700' },
+            used:    { label: '사용됨', cls: 'bg-red-100 text-red-700' },
+            revoked: { label: '회수',   cls: 'bg-gray-100 text-gray-500' },
+        };
+        const HT_TYPE = { account: '미끼 계정', api_key: '관리자 키' };
+        const HT_PLACE = { users_table: 'DB 회원 표', admin_console: '관리 콘솔' };
+
+        function fmtTime(iso) { return iso ? iso.slice(5, 16).replace('T', ' ') : ''; }
+
+        async function loadHoneytokens() {
+            const res = await fetch('/api/admin/honeytokens', { headers: { 'Authorization': `Bearer ${token}` } });
+            const tbody = document.getElementById('ht-tbody');
+            if (!res.ok) { tbody.innerHTML = '<tr><td colspan="7" class="py-3 text-red-500">조회 실패</td></tr>'; return; }
+            const data = await res.json();
+            const c = data.counts || {};
+            document.getElementById('ht-summary').innerHTML = `
+                <span class="px-2 py-1 rounded bg-gray-50 text-gray-600">전체 <b>${data.count}</b></span>
+                <span class="px-2 py-1 rounded ${HT_STATUS.active.cls}">대기 <b>${c.active || 0}</b></span>
+                <span class="px-2 py-1 rounded ${HT_STATUS.used.cls}">사용됨 <b>${c.used || 0}</b></span>
+                <span class="px-2 py-1 rounded ${HT_STATUS.revoked.cls}">회수 <b>${c.revoked || 0}</b></span>`;
+            document.getElementById('ht-updated').innerText = '갱신 ' + new Date().toLocaleTimeString('ko-KR');
+
+            const rows = data.honeytokens || [];
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="py-3 text-gray-400">심어둔 미끼가 없습니다. 위에서 미끼를 심어 보세요.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(h => {
+                const st = HT_STATUS[h.status] || HT_STATUS.active;
+                const rowCls = h.status === 'used' ? 'bg-red-50' : '';
+                const used = h.used_at ? `${fmtTime(h.used_at)} · ${escapeHtml(h.used_by_ip || '')}` : '<span class="text-gray-300">-</span>';
+                const btn = h.status !== 'revoked'
+                    ? `<button onclick="revokeHoneytoken('${escapeAttr(h.token_id)}')" class="text-xs text-gray-500 hover:text-red-600 hover:underline">회수</button>`
+                    : '';
+                return `<tr class="border-b border-gray-50 ${rowCls}">
+                    <td class="py-2 pr-2 font-medium">${escapeHtml(h.token_id)}</td>
+                    <td class="py-2 pr-2 text-gray-500">${HT_TYPE[h.token_type] || escapeHtml(h.token_type)}</td>
+                    <td class="py-2 pr-2 font-mono text-xs">${escapeHtml(h.token_value)}</td>
+                    <td class="py-2 pr-2 text-gray-500">${HT_PLACE[h.placement] || escapeHtml(h.placement || '-')}</td>
+                    <td class="py-2 pr-2"><span class="text-xs px-2 py-0.5 rounded-full ${st.cls}">${st.label}</span></td>
+                    <td class="py-2 pr-2 text-xs text-gray-500">${used}</td>
+                    <td class="py-2">${btn}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function onHtTypeChange() {
+            const isKey = document.getElementById('ht-type').value === 'api_key';
+            const input = document.getElementById('ht-username');
+            input.disabled = isKey;
+            input.placeholder = isKey ? '키 값은 자동으로 만들어집니다' : '미끼 계정명 (예: sys_ops)';
+            if (isKey) input.value = '';
+        }
+
+        async function createHoneytoken() {
+            const token_type = document.getElementById('ht-type').value;
+            const username = document.getElementById('ht-username').value.trim();
+            const msg = document.getElementById('ht-msg');
+            const res = await fetch('/api/admin/honeytokens', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ token_type, username }),
+            });
+            const data = await res.json();
+            msg.className = 'text-xs mb-3 ' + (res.ok ? 'text-green-600' : 'text-red-500');
+            msg.innerText = data.msg || (res.ok ? '완료' : '실패');
+            if (res.ok) { document.getElementById('ht-username').value = ''; loadHoneytokens(); }
+        }
+
+        async function revokeHoneytoken(id) {
+            if (!confirm(`${id} 미끼를 회수할까요? (회수해도 누가 쓰면 계속 탐지됩니다)`)) return;
+            const res = await fetch(`/api/admin/honeytokens/${encodeURIComponent(id)}/revoke`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            const data = await res.json();
+            const msg = document.getElementById('ht-msg');
+            msg.className = 'text-xs mb-3 ' + (res.ok ? 'text-gray-600' : 'text-red-500');
+            msg.innerText = data.msg || '';
+            loadHoneytokens();
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+        }
+        function escapeAttr(str) {
+            return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        init();
+    </script>
+</body>
+</html>
