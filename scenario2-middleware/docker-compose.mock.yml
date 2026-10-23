@@ -1,0 +1,35 @@
+# Mock Graylog 활성화용 Override Compose 파일
+# 실제 Graylog가 없고 자체 모의 서버로 테스트하고 싶을 때 사용합니다.
+# 사용법:
+#   docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d --build
+services:
+  mock-graylog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soar-mock-graylog
+    hostname: mock-graylog
+    restart: unless-stopped
+    mem_limit: 256m
+    command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", "12201", "--workers", "1"]
+    ports:
+      - "12201:12201"
+    environment:
+      MOCK_GRAYLOG_HOST: "0.0.0.0"
+      MOCK_GRAYLOG_PORT: "12201"
+      KILL_CHAIN_TARGET_IP: "10.0.0.99"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12201/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - soar-siem-net
+
+  consumer-worker:
+    environment:
+      GRAYLOG_GELF_URL: "http://mock-graylog:12201/gelf"
+    depends_on:
+      mock-graylog:
+        condition: service_healthy
