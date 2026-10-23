@@ -1,0 +1,35 @@
+{
+  "name": "scenario3-api-key-compromised",
+  "description": "비허용 IP에서 활성 API 키가 사용되어 403이 발생하면 즉시 탐지합니다.",
+  "search_query": "(event_type:api_key_compromised OR event_type:API_KEY_COMPROMISED) AND status_code:403",
+  "execute_every_seconds": 10,
+  "search_window_seconds": 60,
+  "condition": {
+    "type": "message_count",
+    "operator": "greater_than",
+    "threshold": 0,
+    "group_by": ["client_ip"]
+  },
+  "event_fields": [
+    "event_type",
+    "client_ip",
+    "timestamp",
+    "target_resource",
+    "status_code",
+    "raw_payload"
+  ],
+  "notification": {
+    "type": "http",
+    "method": "POST",
+    "url": "http://n8n:5678/webhook/scenario3-api-key-compromised",
+    "content_type": "application/json",
+    "body_template": {
+      "event_type": "${event_type}",
+      "client_ip": "${client_ip}",
+      "timestamp": "${timestamp}",
+      "target_resource": "${target_resource}",
+      "status_code": "${status_code}",
+      "raw_payload": "${raw_payload}"
+    }
+  }
+}
