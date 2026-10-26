@@ -22,6 +22,7 @@
 | `controllers/admin_controller.py` | 허니토큰 현황·생성·회수 API, 가짜 관리자 키 탐지 |
 | `controllers/page_controller.py` | 관리자 페이지에 가짜 관리자 키 심기 |
 | `templates/admin.html` | 관리 콘솔 "허니토큰(미끼) 관리" 섹션 (10초 자동 갱신) |
+| `graylog/scenario1_content_pack.json` | Graylog 알림·이벤트 정의 콘텐츠 팩 |
 
 ## 설정 순서
 
@@ -47,6 +48,7 @@ Windows 에이전트 설정(`C:\Program Files (x86)\ossec-agent\ossec.conf`, 관
 ```
 
 ### 3. Graylog
+**빠른 설정:** System → Content Packs → Upload → `graylog/scenario1_content_pack.json` 업로드 → Install. 알림과 이벤트 정의가 한 번에 만들어집니다. URL 허용 목록은 아래처럼 따로 추가해야 합니다.
 - **URL 허용 목록**(System → Configurations → URL Whitelist): `http://host.docker.internal:5678/webhook/honeytoken` (Exact match)
 - **알림**(Alerts → Notifications): `S1 n8n Webhook (honeytoken)`, Custom HTTP Notification, POST, 위 URL, 본문:
   ```json
