@@ -9,7 +9,7 @@ class MainApiServerTest(unittest.TestCase):
     def setUp(self):
         api_app.API_KEYS.clear()
         api_app.API_KEYS["test-key-01"] = {
-            "api_key_id": "test-key-01",
+            "api_key_id": "key-001",
             "status": "active",
             "allowed_ips": {"127.0.0.1"},
         }
@@ -36,7 +36,8 @@ class MainApiServerTest(unittest.TestCase):
         self.assertEqual(response.get_json()["message"], "authorized")
         event = api_app.SECURITY_EVENTS[-1]
         self.assertEqual(event["event_type"], "api_request_allowed")
-        self.assertEqual(event["api_key_id"], "test-key-01")
+        self.assertEqual(event["api_key_id"], "key-001")
+        self.assertNotEqual(event["api_key_id"], "test-key-01")
         self.assertEqual(event["status_code"], 200)
         self.assertIn("timestamp", event)
         self.assertIn("client_ip", event)
@@ -65,7 +66,7 @@ class MainApiServerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         event = api_app.SECURITY_EVENTS[-1]
         self.assertEqual(event["event_type"], "api_key_compromised")
-        self.assertEqual(event["api_key_id"], "test-key-01")
+        self.assertEqual(event["api_key_id"], "key-001")
         self.assertEqual(event["client_ip"], "10.10.10.10")
         self.assertEqual(event["detection_reason"], "not_allowed_ip")
 
@@ -110,14 +111,15 @@ class MainApiServerTest(unittest.TestCase):
         self.assertEqual(captured["request"].get_header("X-api-key"), "middleware-demo-key")
         self.assertEqual(request_body["schema_version"], "1.0")
         self.assertEqual(request_body["severity"], 6)
-        self.assertEqual(request_body["raw_payload"]["api_key_id"], "test-key-01")
+        self.assertEqual(request_body["raw_payload"]["api_key_id"], "key-001")
+        self.assertNotIn("test-key-01", json.dumps(request_body))
         self.assertNotIn("api_key_id", request_body)
 
     def test_n8n_webhook_revokes_key_and_blocks_ip(self):
         response = self.client.post(
             "/automation/revoke-key",
             json={
-                "api_key_id": "test-key-01",
+                "api_key_id": "key-001",
                 "client_ip": "10.10.10.10",
                 "detection_reason": "not_allowed_ip",
             },
@@ -127,10 +129,20 @@ class MainApiServerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(body["key_revoked"])
         self.assertTrue(body["ip_blocked"])
-        self.assertEqual(body["new_api_key_id"], "test-key-01-renewed")
+        self.assertEqual(body["new_api_key_id"], "key-001-renewed")
+        self.assertEqual(body["new_api_key"], "test-key-01-renewed")
         self.assertEqual(api_app.API_KEYS["test-key-01"]["status"], "revoked")
         self.assertIn("10.10.10.10", api_app.BLOCKED_IPS)
         self.assertEqual(api_app.INCIDENTS[0]["incident_id"], "INC-API-001")
+
+        new_key_response = self.client.get(
+            "/api/data",
+            headers={"X-API-Key": body["new_api_key"]},
+        )
+        self.assertEqual(new_key_response.status_code, 200)
+        self.assertEqual(
+            api_app.SECURITY_EVENTS[-1]["api_key_id"], "key-001-renewed"
+        )
 
 
 if __name__ == "__main__":

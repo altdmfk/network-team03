@@ -23,7 +23,9 @@ app = Flask(__name__)
 # cache. The field names used in emitted events are fixed by the project plan.
 API_KEYS = {
     "test-key-01": {
-        "api_key_id": "test-key-01",
+        # The dictionary key is the authentication secret.  It must never be
+        # written to security events or forwarded to Middleware.
+        "api_key_id": "key-001",
         "status": "active",
         "allowed_ips": {"127.0.0.1"},
     },
@@ -152,8 +154,16 @@ def find_api_key(raw_api_key):
     return API_KEYS.get(raw_api_key)
 
 
+def find_api_key_by_id(api_key_id):
+    """Return ``(secret, record)`` for a non-secret identifier."""
+    for secret, record in API_KEYS.items():
+        if record.get("api_key_id") == api_key_id:
+            return secret, record
+    return None, None
+
+
 def revoke_api_key(api_key_id, reason="manual_demo_action"):
-    record = API_KEYS.get(api_key_id)
+    _secret, record = find_api_key_by_id(api_key_id)
     if record is None:
         return None
     record["status"] = "revoked"
@@ -179,14 +189,15 @@ def create_incident(api_key_id, reason, blocked_ip=None, ip_blocked=False):
 
 def automatic_response(api_key_id, reason, suspicious_ip):
     """Simulate the n8n workflow called after detection is confirmed."""
-    record = API_KEYS.get(api_key_id)
+    secret, record = find_api_key_by_id(api_key_id)
     if record is None:
         return {"key_revoked": False, "new_api_key_id": None, "incident": None}
 
     record["status"] = "revoked"
     record["revoked_reason"] = reason
     new_api_key_id = f"{api_key_id}-renewed"
-    API_KEYS[new_api_key_id] = {
+    new_api_key = f"{secret}-renewed"
+    API_KEYS[new_api_key] = {
         "api_key_id": new_api_key_id,
         "status": "active",
         "allowed_ips": set(record["allowed_ips"]),
@@ -214,6 +225,9 @@ def automatic_response(api_key_id, reason, suspicious_ip):
     return {
         "key_revoked": True,
         "new_api_key_id": new_api_key_id,
+        # This is returned only as the key-rotation result. It is not included
+        # in security events, Middleware payloads, Graylog, or Discord text.
+        "new_api_key": new_api_key,
         "ip_blocked": ip_blocked,
         "incident": incident,
     }
@@ -247,18 +261,18 @@ def health():
 @app.route("/api/data", methods=["GET", "POST"])
 def protected_data():
     current_ip = client_ip()
+    raw_api_key = request.headers.get("X-API-Key", "")
+    record = find_api_key(raw_api_key)
+    api_key_id = record["api_key_id"] if record else "unknown"
+
     if current_ip in BLOCKED_IPS:
         return rejected_response(
             403,
             "api_key_compromised",
-            "unknown",
+            api_key_id,
             "blocked_ip",
             "Client IP has been blocked",
         )
-
-    raw_api_key = request.headers.get("X-API-Key", "")
-    record = find_api_key(raw_api_key)
-    api_key_id = record["api_key_id"] if record else "unknown"
 
     if record is None:
         return rejected_response(
@@ -323,8 +337,8 @@ def protected_data():
 
 @app.get("/api/key/status")
 def key_status():
-    api_key_id = request.args.get("api_key_id", "test-key-01")
-    record = API_KEYS.get(api_key_id)
+    api_key_id = request.args.get("api_key_id", "key-001")
+    _secret, record = find_api_key_by_id(api_key_id)
     if record is None:
         return jsonify(error="not_found", message="Unknown API key"), 404
     return jsonify(
@@ -354,7 +368,7 @@ def blocked_ips():
 def automation_revoke_key():
     """Demo n8n webhook for response after Graylog/Wazuh detection."""
     body = request.get_json(silent=True) or {}
-    api_key_id = body.get("api_key_id", "test-key-01")
+    api_key_id = body.get("api_key_id", "key-001")
     reason = body.get("detection_reason", "suspicious_api_key_usage")
     suspicious_ip = body.get("client_ip") or "unknown"
 

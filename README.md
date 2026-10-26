@@ -24,6 +24,7 @@ $env:MIDDLEWARE_API_KEY = "<공유된 Middleware 인증키>"
 Postman 테스트:
 
 - 정상 요청: `X-API-Key: test-key-01`, `X-Demo-Client-IP: 127.0.0.1` → `200`
+- `test-key-01`은 데모 인증용 비밀값이며, 로그·Graylog·n8n에는 별도 식별자 `api_key_id: key-001`만 기록됩니다.
 - 비허용 IP 요청: 같은 API 키, `X-Demo-Client-IP: 10.10.10.10` → `403`
 
 ## 테스트
