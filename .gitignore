@@ -1,5 +1,39 @@
+# Python
 __pycache__/
 *.py[cod]
-security_events.jsonl
+*$py.class
+*.so
+*.obj
+*.o
+*.a
+*.lib
+
+# Virtual environments
 .venv/
 venv/
+env/
+ENV/
+
+# Build, test, and IDE files
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Runtime state
+security_events.jsonl
+state/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+dead_letter_logs.jsonl
+*.tmp

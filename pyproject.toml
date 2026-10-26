@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+testpaths = ["scenario2-middleware/tests"]
+pythonpath = ["scenario2-middleware/src", "scenario2-middleware/simulators", "scenario2-middleware"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
