@@ -54,7 +54,7 @@ $env:MIDDLEWARE_INGEST_URL = "http://127.0.0.1:8000/v1/ingest"
 `client_ip`, `target_resource`, `status_code`이며, 상황에 따라 `user_agent`,
 `detection_reason`, `incident_id`, `action`, `status`가 추가됩니다.
 
-## 시나리오 3 추가 안내
+## API 키 식별자 안내
 
 인증에 사용하는 실제 API 키와 로그에 남기는 `api_key_id`를 분리합니다.
 실제 인증값은 서버에서만 사용하고, 로그·Graylog·n8n에는 키 식별자만 전달합니다.
