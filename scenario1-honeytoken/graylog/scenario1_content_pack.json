@@ -1,0 +1,197 @@
+{
+  "v": 1,
+  "id": "a0a572c3-7579-44a3-b3a8-8d7a1e6e2eb9",
+  "rev": 1,
+  "name": "S1 Honeytoken",
+  "summary": "시나리오1 허니토큰 탐지 이벤트·알림",
+  "description": "",
+  "vendor": "team3",
+  "url": "",
+  "parameters": [],
+  "entities": [
+    {
+      "v": "1",
+      "type": {
+        "name": "notification",
+        "version": "1"
+      },
+      "id": "e6961f3d-8d15-4b18-b40d-1934b176e5ec",
+      "data": {
+        "title": {
+          "@type": "string",
+          "@value": "S1 n8n Webhook (honeytoken)"
+        },
+        "description": {
+          "@type": "string",
+          "@value": "시나리오1 허니토큰 사용 시 n8n 대응 워크플로우 호출"
+        },
+        "config": {
+          "type": "http-notification-v2",
+          "url": {
+            "@type": "string",
+            "@value": "http://host.docker.internal:5678/webhook/honeytoken"
+          },
+          "skip_tls_verification": {
+            "@type": "boolean",
+            "@value": false
+          },
+          "method": {
+            "@type": "string",
+            "@value": "POST"
+          },
+          "time_zone": {
+            "@type": "string",
+            "@value": "UTC"
+          },
+          "content_type": {
+            "@type": "string",
+            "@value": "JSON"
+          },
+          "headers": {
+            "@type": "string",
+            "@value": ""
+          },
+          "body_template": {
+            "@type": "string",
+            "@value": "{\n  \"event_type\": \"honeytoken_used\",\n  \"src_ip\": \"${event.fields.src_ip}\",\n  \"token_id\": \"${event.fields.token_id}\",\n  \"placement\": \"${event.fields.placement}\",\n  \"username\": \"${event.fields.username}\",\n  \"timestamp\": \"${event.timestamp}\",\n  \"title\": \"${event_definition_title}\"\n}"
+          }
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=6.1.16+4a05695"
+        }
+      ]
+    },
+    {
+      "v": "1",
+      "type": {
+        "name": "event_definition",
+        "version": "1"
+      },
+      "id": "a557551e-39c6-45d9-ba9b-069a9233be25",
+      "data": {
+        "field_spec": {
+          "src_ip": {
+            "data_type": "string",
+            "providers": [
+              {
+                "type": "template-v1",
+                "template": "${source.src_ip}",
+                "require_values": false
+              }
+            ]
+          },
+          "token_id": {
+            "data_type": "string",
+            "providers": [
+              {
+                "type": "template-v1",
+                "template": "${source.token_id}",
+                "require_values": false
+              }
+            ]
+          },
+          "placement": {
+            "data_type": "string",
+            "providers": [
+              {
+                "type": "template-v1",
+                "template": "${source.placement}",
+                "require_values": false
+              }
+            ]
+          },
+          "username": {
+            "data_type": "string",
+            "providers": [
+              {
+                "type": "template-v1",
+                "template": "${source.username}",
+                "require_values": false
+              }
+            ]
+          }
+        },
+        "config": {
+          "query_parameters": [],
+          "search_within_ms": 10000,
+          "query": {
+            "@type": "string",
+            "@value": "rule:honeytoken"
+          },
+          "cron_expression": null,
+          "cron_timezone": null,
+          "use_cron_scheduling": false,
+          "streams": [],
+          "execute_every_ms": 10000,
+          "event_limit": 100,
+          "group_by": [],
+          "series": [],
+          "conditions": {
+            "expression": null
+          },
+          "type": "aggregation-v1",
+          "stream_categories": [],
+          "filters": []
+        },
+        "priority": {
+          "@type": "integer",
+          "@value": 3
+        },
+        "notifications": [
+          {
+            "notification_id": {
+              "@type": "string",
+              "@value": "e6961f3d-8d15-4b18-b40d-1934b176e5ec"
+            },
+            "notification_parameters": null
+          }
+        ],
+        "remediation_steps": null,
+        "matched_at": "2026-10-22T05:01:06.861Z",
+        "_scope": {
+          "@type": "string",
+          "@value": "DEFAULT"
+        },
+        "notification_settings": {
+          "grace_period_ms": 0,
+          "backlog_size": 0
+        },
+        "updated_at": "2026-10-20T08:27:03.626Z",
+        "title": {
+          "@type": "string",
+          "@value": "S1 Honeytoken used"
+        },
+        "is_scheduled": {
+          "@type": "boolean",
+          "@value": true
+        },
+        "key_spec": [],
+        "storage": [
+          {
+            "type": "persist-to-streams-v1",
+            "streams": [
+              "000000000000000000000002"
+            ]
+          }
+        ],
+        "alert": {
+          "@type": "boolean",
+          "@value": true
+        },
+        "description": {
+          "@type": "string",
+          "@value": "시나리오1 미끼 계정 사용 감지 — 1회 즉시 확정"
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=6.1.16+4a05695"
+        }
+      ]
+    }
+  ]
+}
