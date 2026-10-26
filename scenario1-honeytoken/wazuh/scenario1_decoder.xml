@@ -1,0 +1,11 @@
+<!-- 시나리오1 허니토큰 디코더
+     로그 형식: <ts> honeytoken_used token_id=HT-001 user=backup_admin src_ip=1.2.3.4 -->
+<decoder name="honeytoken">
+  <prematch> honeytoken_used token_id=</prematch>
+</decoder>
+
+<decoder name="honeytoken-fields">
+  <parent>honeytoken</parent>
+  <regex>honeytoken_used token_id=(\S+) user=(\S+) src_ip=(\S+)</regex>
+  <order>token_id,dstuser,srcip</order>
+</decoder>
