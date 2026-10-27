@@ -1,7 +1,6 @@
 # 시나리오 1 — 허니토큰 기만 탐지
 
 정상 사용자는 쓰지 않는 미끼 계정을 심어두고, 그 계정으로 로그인하는 순간 1회 만에 침입으로 확정해 자동 차단합니다.
-> **폴더 구성**: `app/`은 메인 API 서버(Flask 게시판, `gamedh823-cmd/Aleph-Board-Team3` 기준)에서 시나리오 1을 위해 추가·수정한 파일입니다. 같은 경로에 덮어쓰거나 해당 부분을 옮겨 붙여 사용합니다. `wazuh/`, `n8n/`은 아래 설정 순서에서 그대로 사용합니다.
 
 ```
 미끼 계정 로그인 → 메인 API 서버: 401 위장 응답 + 미끼 사용 기록
@@ -19,10 +18,13 @@
 | `controllers/seclog.py` | security.log에 `honeytoken_used` 기록 |
 | `wazuh/scenario1_decoder.xml`, `wazuh/scenario1_rules.xml` | Wazuh 디코더·룰(100500) |
 | `n8n/scenario1_honeytoken.json` | n8n 대응 워크플로우 (토큰·키는 `YOUR_...`로 비워둠) |
-| `controllers/admin_controller.py` | 허니토큰 현황·생성·회수 API, 가짜 관리자 키 탐지 |
-| `controllers/page_controller.py` | 관리자 페이지에 가짜 관리자 키 심기 |
+| `controllers/admin_controller.py` | 허니토큰 현황·생성·회수 API, 가짜 관리자 키 탐지, 관제 화면 요약·계정명 추천 API |
+| `controllers/page_controller.py` | 관리자 페이지에 가짜 관리자 키 심기, 관제 화면 주소(`/honeytoken`) |
 | `templates/admin.html` | 관리 콘솔 "허니토큰(미끼) 관리" 섹션 (10초 자동 갱신) |
+| `templates/honeytoken.html` | 시나리오 1 관제 화면 (경보 배너·대응 타임라인·미끼 관리, 10초 자동 갱신) |
 | `graylog/scenario1_content_pack.json` | Graylog 알림·이벤트 정의 콘텐츠 팩 |
+
+> **폴더 구성**: `app/`은 메인 API 서버(Flask 게시판, `gamedh823-cmd/Aleph-Board-Team3` 기준)에서 시나리오 1을 위해 추가·수정한 파일입니다. 같은 경로에 덮어쓰거나 해당 부분을 옮겨 붙여 사용합니다. `wazuh/`, `n8n/`, `graylog/`은 아래 설정 순서에서 그대로 사용합니다.
 
 ## 설정 순서
 
@@ -86,6 +88,9 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/auth/login -Conten
 ### 관리 콘솔
 관리자로 로그인 → `/admin` → "허니토큰(미끼) 관리"에서 미끼 계정·관리자 키를 심고 회수할 수 있습니다.
 가짜 관리자 키는 관리자 페이지 소스 주석에 숨겨져 있으며, 이 키로 관리자 API를 호출하면 401 위장 응답과 함께 탐지·차단됩니다.
+
+### 관제 화면
+관리자로 로그인 → `/honeytoken`. 미끼가 쓰이면 경보 배너가 뜨고, 미끼 사용 → 탐지 → IP 차단 → 인시던트 티켓까지 걸린 시간을 타임라인으로 보여줍니다. 미끼 계정명은 추천 이름 중에서 골라 심을 수 있습니다.
 
 ## 시험 결과 (2026-10-22)
 
