@@ -1,13 +1,152 @@
 ﻿{
-  "name": "시나리오4 - 킬체인 자동 대응",
+  "name": "시나리오4 - 킬체인 상관분석 대응",
   "nodes": [
-    { "parameters": { "httpMethod": "POST", "path": "killchain-critical", "responseMode": "onReceived", "options": {} }, "name": "Webhook - Graylog CRITICAL", "type": "n8n-nodes-base.webhook", "typeVersion": 1, "position": [240, 300] },
-    { "parameters": { "method": "POST", "url": "https://YOUR_PFSENSE_HOST/api/v1/firewall/alias/entry", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "sendHeaders": true, "headerParameters": { "parameters": [ { "name": "Content-Type", "value": "application/json" } ] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ { \"alias\": \"killchain_block\", \"address\": $json.client_ip } }}", "options": {} }, "name": "pfSense - IP 차단", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 160] },
-    { "parameters": { "method": "POST", "url": "http://YOUR_PICO_W_IP/lockdown", "sendHeaders": true, "headerParameters": { "parameters": [ { "name": "X-Auth-Token", "value": "CHANGE_ME_SHARED_SECRET" } ] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ { \"reason\": \"killchain_confirmed\", \"client_ip\": $json.client_ip } }}", "options": {} }, "name": "Pico W - Lockdown", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 300] },
-    { "parameters": { "method": "POST", "url": "https://YOUR_DISCORD_WEBHOOK_URL", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ { \"content\": \"Kill-Chain CRITICAL\\nIP: \" + $json.client_ip + \"\\n정찰->침투->물리타격 연쇄 확인, IoT Lockdown 적용됨\" } }}", "options": {} }, "name": "Discord - 알림", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [500, 440] },
-    { "parameters": { "mode": "manual", "assignments": { "assignments": [ { "name": "incident_type", "value": "kill_chain", "type": "string" }, { "name": "client_ip", "value": "={{ $json.client_ip }}", "type": "string" }, { "name": "status", "value": "locked", "type": "string" }, { "name": "created_at", "value": "={{ $now }}", "type": "string" } ] }, "options": {} }, "name": "인시던트 티켓 생성 (플레이스홀더)", "type": "n8n-nodes-base.set", "typeVersion": 3.4, "position": [500, 580] }
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "killchain-alert",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Graylog Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "killchain-alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "is-critical",
+              "leftValue": "={{$json.body.severity}}",
+              "rightValue": "CRITICAL",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-severity",
+      "name": "CRITICAL 인지 확인",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://<PFSENSE_HOST>/api/v2/firewall/alias/entry",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Authorization", "value": "Bearer <PFSENSE_API_TOKEN>" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"name\": \"attacker_ips\", \"address\": $json.body.client_ip } }}",
+        "options": {}
+      },
+      "id": "http-pfsense-block",
+      "name": "pfSense IP 차단",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://<ESP32_IP>/lockdown",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-Auth-Token", "value": "<IOT_AUTH_TOKEN>" } ] },
+        "options": {}
+      },
+      "id": "http-iot-lockdown",
+      "name": "ESP32 Lockdown",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "ticket-id", "name": "incident_id", "value": "=INC-{{$now.format('yyyyMMdd-HHmmss')}}", "type": "string" },
+            { "id": "ticket-ip", "name": "client_ip", "value": "={{$json.body.client_ip}}", "type": "string" },
+            { "id": "ticket-stages", "name": "stages", "value": "={{$json.body.stages}}", "type": "string" },
+            { "id": "ticket-status", "name": "status", "value": "OPEN - lockdown applied", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-incident-ticket",
+      "name": "인시던트 티켓 생성",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/<WEBHOOK_ID>/<WEBHOOK_TOKEN>",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"content\": \"🚨 CRITICAL 킬체인 인시던트 \" + $json.incident_id + \"\\nIP: \" + $json.client_ip + \"\\n단계: \" + $json.stages + \"\\nESP32 Lockdown 적용됨\" } }}",
+        "options": {}
+      },
+      "id": "http-discord-critical",
+      "name": "메신저 알림 (CRITICAL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 440]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://<ESP32_IP>/warning",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-Auth-Token", "value": "<IOT_AUTH_TOKEN>" } ] },
+        "options": {}
+      },
+      "id": "http-iot-warning",
+      "name": "ESP32 Warning (LED 노랑)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/<WEBHOOK_ID>/<WEBHOOK_TOKEN>",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"content\": \"⚠️ 경고: 킬체인 1~2단계만 탐지됨\\nIP: \" + $json.body.client_ip + \"\\n단계: \" + $json.body.stages } }}",
+        "options": {}
+      },
+      "id": "http-discord-warning",
+      "name": "메신저 알림 (WARNING)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 600]
+    }
   ],
   "connections": {
-    "Webhook - Graylog CRITICAL": { "main": [ [ { "node": "pfSense - IP 차단", "type": "main", "index": 0 }, { "node": "Pico W - Lockdown", "type": "main", "index": 0 }, { "node": "Discord - 알림", "type": "main", "index": 0 }, { "node": "인시던트 티켓 생성 (플레이스홀더)", "type": "main", "index": 0 } ] ] }
+    "Graylog Webhook": { "main": [[ { "node": "CRITICAL 인지 확인", "type": "main", "index": 0 } ]] },
+    "CRITICAL 인지 확인": {
+      "main": [
+        [
+          { "node": "pfSense IP 차단", "type": "main", "index": 0 },
+          { "node": "ESP32 Lockdown", "type": "main", "index": 0 },
+          { "node": "인시던트 티켓 생성", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "ESP32 Warning (LED 노랑)", "type": "main", "index": 0 },
+          { "node": "메신저 알림 (WARNING)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "인시던트 티켓 생성": { "main": [[ { "node": "메신저 알림 (CRITICAL)", "type": "main", "index": 0 } ]] }
   }
 }

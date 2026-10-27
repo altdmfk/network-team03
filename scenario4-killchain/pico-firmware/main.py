@@ -6,16 +6,54 @@ from machine import Pin
 
 import config
 
-onboard_led = Pin("LED", Pin.OUT)
-external_led = Pin(config.EXTERNAL_LED_PIN, Pin.OUT) if config.EXTERNAL_LED_PIN is not None else None
+led_red = Pin(config.LED_RED_PIN, Pin.OUT)
+led_green = Pin(config.LED_GREEN_PIN, Pin.OUT)
 
-state = {"locked": False}
+# status: "normal"(초록) / "warning"(적+녹=노랑, 1~2단계 탐지) / "locked"(적색, 킬체인 확정)
+state = {"status": "normal"}
 
 
-def set_leds(locked):
-    onboard_led.value(1 if locked else 0)
-    if external_led is not None:
-        external_led.value(1 if locked else 0)
+def show_normal():
+    led_red.value(0)
+    led_green.value(1)
+
+
+def show_warning():
+    led_red.value(1)
+    led_green.value(1)
+
+
+def show_locked():
+    led_red.value(1)
+    led_green.value(0)
+
+
+def apply_status(status):
+    state["status"] = status
+    if status == "normal":
+        show_normal()
+    elif status == "warning":
+        show_warning()
+    elif status == "locked":
+        show_locked()
+
+
+def blink_once():
+    # device/control 정상 처리 시 짧게 한 번 깜빡여서 명령 수신을 눈으로 확인
+    led_green.value(0)
+    time.sleep(0.15)
+    led_green.value(1)
+
+
+def apply_lockdown():
+    # 깜빡임 3회 후 고정 적색 - Lockdown 적용을 시각적으로 구분
+    for _ in range(3):
+        led_red.value(0)
+        led_green.value(0)
+        time.sleep(0.15)
+        led_red.value(1)
+        time.sleep(0.15)
+    apply_status("locked")
 
 
 def connect_wifi():
@@ -73,43 +111,51 @@ def is_authorized(headers):
 def handle_request(method, path, headers, body):
     # 상태 조회 - 인증 불필요
     if method == "GET" and path == "/":
-        return json_response(200, "OK", {"device": "pico-w-iot-01", "locked": state["locked"]})
+        return json_response(200, "OK", {"device": "esp32-c3-iot-01", "status": state["status"]})
 
     # IoT 제어 API - 정상 운영 명령(리부트/센서값조작/상태변경 등)이 들어오는 지점
-    # Lockdown 상태에서는 전부 거부
+    # Lockdown 상태에서는 전부 거부(423)
     if method == "POST" and path == "/device/control":
-        if state["locked"]:
-            return json_response(423, "Locked", {"error": "device is locked", "locked": True})
+        if state["status"] == "locked":
+            return json_response(423, "Locked", {"error": "device is locked", "status": "locked"})
         try:
             cmd = json.loads(body) if body else {}
         except Exception:
             cmd = {}
         print("device/control 수신:", cmd)
+        blink_once()
         return json_response(200, "OK", {"result": "executed", "command": cmd.get("command", "unknown")})
 
-    # n8n이 킬체인 확정 시 호출하는 엔드포인트
+    # n8n이 킬체인 1~2단계만 탐지했을 때 호출 - LED 노랑(경고)으로 전환
+    if method == "POST" and path == "/warning":
+        if not is_authorized(headers):
+            return json_response(401, "Unauthorized", {"error": "invalid token"})
+        if state["status"] != "locked":
+            apply_status("warning")
+        print("WARNING 적용됨 (1~2단계 탐지)")
+        return json_response(200, "OK", {"status": state["status"]})
+
+    # n8n이 킬체인 확정(3단계 모두 충족) 시 호출하는 엔드포인트
     if method == "POST" and path == "/lockdown":
         if not is_authorized(headers):
             return json_response(401, "Unauthorized", {"error": "invalid token"})
-        state["locked"] = True
-        set_leds(True)
+        apply_lockdown()
         print("LOCKDOWN 적용됨")
-        return json_response(200, "OK", {"locked": True})
+        return json_response(200, "OK", {"status": state["status"]})
 
     # 조장(본인) 수동 승인 시에만 호출하는 해제 엔드포인트
     if method == "POST" and path == "/unlock":
         if not is_authorized(headers):
             return json_response(401, "Unauthorized", {"error": "invalid token"})
-        state["locked"] = False
-        set_leds(False)
+        apply_status("normal")
         print("Lockdown 해제됨 (수동 승인)")
-        return json_response(200, "OK", {"locked": False})
+        return json_response(200, "OK", {"status": state["status"]})
 
     return json_response(404, "Not Found", {"error": "unknown route"})
 
 
 def main():
-    set_leds(False)
+    apply_status("normal")
     ip = connect_wifi()
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
