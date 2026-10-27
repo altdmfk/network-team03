@@ -482,3 +482,69 @@ def revoke_honeytoken(token_id):
     token.status = 'revoked'
     db.session.commit()
     return jsonify({'msg': f'{token_id} 미끼를 회수했습니다.', 'honeytoken': token.to_dict()})
+
+
+@admin_bp.route('/honeytokens/overview', methods=['GET'])
+@admin_required
+def honeytoken_overview():
+    """시나리오1 관제 화면용 — 미끼 현황 + 탐지 기록(사용 → 차단 → 인시던트)을 한 번에.
+    대응 시간 = 차단 시각 - 미끼 사용 시각(초). 화면 시계 오차를 피하려고 server_now도 같이 준다."""
+    rows = Honeytoken.query.order_by(Honeytoken.token_id).all()
+    counts = {s: sum(1 for r in rows if r.status == s) for s in ('active', 'used', 'revoked')}
+
+    detections = []
+    for t in sorted((r for r in rows if r.used_at), key=lambda r: r.used_at, reverse=True):
+        ip = t.used_by_ip
+        blocked = db.session.get(BlockedIP, ip) if ip else None
+        inc = None
+        if ip:
+            inc = (Incident.query.filter(Incident.src_ip == ip,
+                                         Incident.created_at >= t.used_at - timedelta(minutes=1))
+                   .order_by(Incident.created_at).first())
+        response_sec = None
+        if blocked and blocked.blocked_at and blocked.blocked_at >= t.used_at:
+            response_sec = round((blocked.blocked_at - t.used_at).total_seconds(), 1)
+        d = t.to_dict()
+        d.update({
+            'ip': ip,
+            'blocked': bool(blocked),
+            'blocked_at': blocked.blocked_at.isoformat() if blocked and blocked.blocked_at else None,
+            'response_sec': response_sec,
+            'incident': ({'id': inc.id, 'status': inc.status, 'severity': inc.severity,
+                          'created_at': inc.created_at.isoformat() if inc.created_at else None}
+                         if inc else None),
+        })
+        detections.append(d)
+
+    secs = [d['response_sec'] for d in detections if d['response_sec'] is not None]
+    blocked_ips = BlockedIP.query.filter(BlockedIP.reason.like('%허니토큰%')).count()
+    return jsonify({
+        'server_now': datetime.now().isoformat(),
+        'counts': counts,
+        'honeytokens': [r.to_dict() for r in rows],
+        'detections': detections,
+        'stats': {
+            'detections': len(detections),
+            'blocked_ips': blocked_ips,
+            'avg_response_sec': round(sum(secs) / len(secs), 1) if secs else None,
+        },
+    })
+
+
+# 공격자가 탐낼 만한 계정명 — 백업·서비스·운영·퇴사자 계정처럼 "권한은 높고 아무도 안 쓰는" 느낌
+HONEY_NAME_POOL = [
+    'backup_admin', 'svc_deploy', 'db_backup', 'sys_ops', 'admin_old', 'root_backup',
+    'it_support', 'jenkins_svc', 'ops_monitor', 'vpn_admin', 'payroll_admin', 'hr_admin',
+    'dev_admin', 'test_admin', 'admin_temp', 'svc_backup', 'infra_ops', 'sec_audit',
+]
+
+
+@admin_bp.route('/honeytokens/suggest', methods=['GET'])
+@admin_required
+def suggest_honeytoken_names():
+    """미끼 계정명 추천 — 이미 있는 회원 이름은 빼고 무작위 4개."""
+    import random
+
+    taken = {u.username for u in User.query.with_entities(User.username).all()}
+    pool = [n for n in HONEY_NAME_POOL if n not in taken]
+    return jsonify({'names': random.sample(pool, min(4, len(pool)))})

@@ -28,6 +28,12 @@ def admin_page():
     return render_template('admin.html', decoy_key=decoy.token_value if decoy else None)
 
 
+@page_bp.route('/honeytoken')
+def honeytoken_page():
+    """시나리오1 허니토큰 관제 화면 — 페이지는 누구에게나, 데이터는 /api/admin/honeytokens/overview(관리자)가 막는다."""
+    return render_template('honeytoken.html')
+
+
 @page_bp.route('/gold')
 def gold_page():
     """골드 전용 페이지 — 페이지는 항상 렌더, 데이터는 /api/gold/posts (서버)가 막는다."""
