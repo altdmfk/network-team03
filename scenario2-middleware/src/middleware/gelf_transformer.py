@@ -18,6 +18,7 @@ def _build_gelf_envelope(
     offset: int,
     client_ip: str,
     event_type: str,
+    api_key_id: str,
     target_resource: str,
     status_code: int,
     serialized_raw_payload: str,
@@ -36,6 +37,7 @@ def _build_gelf_envelope(
         "_event_id": effective_event_id,
         "_client_ip": client_ip,
         "_event_type": event_type,
+        "_api_key_id": api_key_id,
         "_target_resource": target_resource,
         "_status_code": status_code,
         "_raw_payload": serialized_raw_payload,
@@ -85,6 +87,7 @@ def transform_to_gelf(
 
     client_ip = str(raw_event.get("client_ip", "0.0.0.0"))
     event_type = str(raw_event.get("event_type", "UNKNOWN")).upper()
+    api_key_id = str(raw_event.get("api_key_id", "unknown"))
     target_resource = str(raw_event.get("target_resource", "/"))
     status_code = int(raw_event.get("status_code", 0))
     severity = int(raw_event.get("severity", 6))
@@ -123,6 +126,7 @@ def transform_to_gelf(
         offset=eff_offset,
         client_ip=client_ip,
         event_type=event_type,
+        api_key_id=api_key_id,
         target_resource=target_resource,
         status_code=status_code,
         serialized_raw_payload=serialized_raw_payload,
@@ -210,6 +214,7 @@ class GelfTransformer:
                     else "0.0.0.0"
                 ),
                 event_type="UNPARSED_EVENT",
+                api_key_id="unknown",
                 target_resource="unknown",
                 status_code=0,
                 serialized_raw_payload=(

@@ -1,0 +1,119 @@
+{
+  "name": "Scenario 3 - API Key Compromised Response",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scenario3-api-key-compromised",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "scenario3-webhook",
+      "name": "Scenario 3 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "scenario3-api-key-compromised"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst rawPayload = input.raw_payload ?? {};\nconst raw = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;\nconst apiKeyId = input.api_key_id ?? raw.api_key_id;\nconst clientIp = input.client_ip;\nif (!apiKeyId) throw new Error('api_key_id is required');\nif (!clientIp) throw new Error('client_ip is required');\nreturn [{ json: {\n  event_type: input.event_type ?? 'api_key_compromised',\n  api_key_id: apiKeyId,\n  client_ip: clientIp,\n  detection_reason: input.detection_reason ?? raw.detection_reason ?? 'not_allowed_ip',\n  incident_id: input.incident_id ?? raw.incident_id ?? null,\n  timestamp: input.timestamp ?? new Date().toISOString()\n} }];"
+      },
+      "id": "scenario3-normalize",
+      "name": "Normalize Detection Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.API_SERVER_URL || 'http://host.docker.internal:5000') + '/automation/revoke-key' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ api_key_id: $json.api_key_id, client_ip: $json.client_ip, detection_reason: $json.detection_reason, incident_id: $json.incident_id }) }}",
+        "options": {}
+      },
+      "id": "scenario3-automatic-response",
+      "name": "Revoke Key and Block IP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'completed', event_type: $('Normalize Detection Event').item.json.event_type, api_key_id: $('Normalize Detection Event').item.json.api_key_id, client_ip: $('Normalize Detection Event').item.json.client_ip, response: $json }) }}",
+        "options": {}
+      },
+      "id": "scenario3-response",
+      "name": "Respond to Graylog",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1020,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Scenario 3 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Detection Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Detection Event": {
+      "main": [
+        [
+          {
+            "node": "Revoke Key and Block IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revoke Key and Block IP": {
+      "main": [
+        [
+          {
+            "node": "Respond to Graylog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "scenario3-api-key-compromised-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

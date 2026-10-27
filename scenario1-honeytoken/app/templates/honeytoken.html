@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>시나리오 01 — 허니토큰 기만 탐지 관제</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+    <style>
+        body { font-family: Pretendard, -apple-system, "Malgun Gothic", sans-serif; }
+        .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+        @keyframes blink { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+        .live-dot { animation: blink 1.6s ease-in-out infinite; }
+        @keyframes alarm { 0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,.55) } 50% { box-shadow: 0 0 0 10px rgba(220,38,38,0) } }
+        .alarm { animation: alarm 1.4s ease-out infinite; }
+        .step-line { background: linear-gradient(90deg, #3b82f6, #ef4444); }
+    </style>
+</head>
+<body class="min-h-screen text-slate-800" style="background: linear-gradient(135deg, #f1f0ff 0%, #f5f7fb 45%, #e9f6f8 100%);">
+
+<!-- 상단 바 -->
+<header class="border-b border-slate-200/70 bg-white/60 backdrop-blur sticky top-0 z-20">
+    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+        <a href="/" class="flex items-center gap-2 font-bold text-lg text-slate-900">
+            <span class="w-7 h-7 rounded-lg bg-indigo-500 text-white text-sm flex items-center justify-center">E</span>
+            EngineSquare
+        </a>
+        <div class="flex items-center gap-3 text-sm">
+            <span class="hidden sm:flex items-center gap-2 text-slate-500">
+                <span class="live-dot w-2 h-2 rounded-full bg-emerald-500"></span>
+                실시간 · 10초 갱신 <span id="updated" class="mono text-xs text-slate-400"></span>
+            </span>
+            <a href="/admin" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50">관리자 페이지</a>
+        </div>
+    </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-8">
+
+    <!-- 제목 -->
+    <p class="mono text-xs tracking-widest text-indigo-600 font-semibold">SCENARIO 01 · HONEYTOKEN DECEPTION</p>
+    <h1 class="text-3xl sm:text-4xl font-extrabold text-slate-900 mt-2">허니토큰 기만 탐지</h1>
+    <p class="text-slate-500 mt-2">정상 사용자는 절대 쓰지 않는 미끼에 손대는 순간, 단 한 번으로 공격을 확정하고 자동 차단합니다.</p>
+
+    <!-- 권한 없음 -->
+    <div id="denied" class="hidden mt-8 bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-500">
+        <p class="text-lg font-semibold text-slate-700">관리자만 볼 수 있는 화면입니다</p>
+        <p class="text-sm mt-1">관리자(admin) 계정으로 로그인한 뒤 다시 열어 주세요. <span id="denied-why" class="text-slate-400"></span></p>
+        <a href="/" class="inline-block mt-4 px-4 py-2 rounded-full bg-slate-900 text-white text-sm">로그인하러 가기</a>
+    </div>
+
+    <div id="view" class="hidden">
+
+        <!-- 실시간 경보 배너 -->
+        <div id="alarm" class="hidden mt-6 rounded-2xl bg-gradient-to-r from-red-600 to-rose-500 text-white p-5 alarm">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="font-bold text-lg flex items-center gap-2">🚨 미끼 사용 감지 — 공격자를 차단했습니다</p>
+                    <p id="alarm-text" class="text-sm text-red-50 mt-1"></p>
+                </div>
+                <button onclick="dismissAlarm()" class="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30">확인</button>
+            </div>
+        </div>
+
+        <!-- 핵심 지표 -->
+        <section class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+            <div class="rounded-2xl bg-white border border-slate-200 p-5">
+                <p class="text-xs text-slate-500">대기 중인 미끼</p>
+                <p class="text-3xl font-extrabold mt-1"><span id="k-active">-</span><span class="text-base font-medium text-slate-400"> 개</span></p>
+                <p class="text-xs text-slate-400 mt-1">공격자를 기다리는 함정</p>
+            </div>
+            <div id="k-hit-card" class="rounded-2xl bg-white border border-slate-200 p-5">
+                <p class="text-xs opacity-70">걸려든 공격</p>
+                <p class="text-3xl font-extrabold mt-1"><span id="k-hit">-</span><span class="text-base font-medium opacity-60"> 건</span></p>
+                <p class="text-xs opacity-60 mt-1">1회 사용 = 즉시 공격 확정</p>
+            </div>
+            <div class="rounded-2xl bg-white border border-slate-200 p-5">
+                <p class="text-xs text-slate-500">차단된 공격 IP</p>
+                <p class="text-3xl font-extrabold mt-1"><span id="k-blocked">-</span><span class="text-base font-medium text-slate-400"> 개</span></p>
+                <p class="text-xs text-slate-400 mt-1">재접속 시 403</p>
+            </div>
+            <div class="rounded-2xl bg-white border border-slate-200 p-5">
+                <p class="text-xs text-slate-500">평균 대응 시간</p>
+                <p class="text-3xl font-extrabold mt-1 text-indigo-600"><span id="k-resp">-</span><span class="text-base font-medium text-slate-400"> 초</span></p>
+                <p class="text-xs text-slate-400 mt-1">미끼 사용 → IP 차단 (목표 30초)</p>
+            </div>
+        </section>
+
+        <!-- 최근 탐지 타임라인 -->
+        <section class="mt-6 rounded-2xl bg-slate-900 text-white p-6">
+            <div class="flex items-center justify-between">
+                <h2 class="font-bold text-lg">최근 탐지 타임라인</h2>
+                <span id="tl-id" class="mono text-xs text-slate-400"></span>
+            </div>
+            <div id="tl-empty" class="text-slate-400 text-sm py-8 text-center">아직 걸려든 공격이 없습니다. 미끼는 조용히 기다리는 중입니다.</div>
+            <div id="tl" class="hidden mt-6">
+                <div class="relative">
+                    <div class="hidden md:block absolute left-[12.5%] right-[12.5%] top-5 h-0.5 step-line opacity-60"></div>
+                    <ol class="grid grid-cols-1 md:grid-cols-4 gap-5 relative" id="tl-steps"></ol>
+                </div>
+            </div>
+        </section>
+
+        <!-- 공격자 vs 방어자 -->
+        <section class="grid md:grid-cols-2 gap-3 mt-6">
+            <div class="rounded-2xl bg-white border border-slate-200 p-5">
+                <p class="mono text-xs text-slate-400">ATTACKER VIEW</p>
+                <h3 class="font-bold mt-1">공격자에게 보이는 화면</h3>
+                <div class="mt-3 rounded-xl bg-slate-50 border border-slate-200 p-4 mono text-sm">
+                    <p class="text-slate-400">HTTP/1.1 401 UNAUTHORIZED</p>
+                    <p class="text-slate-700 mt-1">"아이디 또는 비밀번호가 잘못되었습니다."</p>
+                </div>
+                <p class="text-xs text-slate-500 mt-3">평범한 로그인 실패와 똑같아서, 공격자는 함정에 걸린 줄 모릅니다.</p>
+            </div>
+            <div class="rounded-2xl bg-white border border-red-200 p-5">
+                <p class="mono text-xs text-red-400">DEFENDER VIEW</p>
+                <h3 class="font-bold mt-1">방어자에게 보이는 화면</h3>
+                <div id="def-box" class="mt-3 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
+                    아직 탐지된 공격이 없습니다.
+                </div>
+                <p class="text-xs text-slate-500 mt-3">같은 순간 방어자는 누가, 어떤 미끼를, 어디서 썼는지 알고 이미 차단했습니다.</p>
+            </div>
+        </section>
+
+        <!-- 탐지 기록 -->
+        <section class="mt-6 rounded-2xl bg-white border border-slate-200 p-5">
+            <h2 class="font-bold">탐지 기록</h2>
+            <div class="overflow-x-auto mt-3">
+                <table class="w-full text-sm whitespace-nowrap">
+                    <thead><tr class="text-left text-xs text-slate-400 border-b">
+                        <th class="py-2 pr-3">시각</th><th class="py-2 pr-3">미끼</th><th class="py-2 pr-3">공격 IP</th>
+                        <th class="py-2 pr-3">차단</th><th class="py-2 pr-3">대응 시간</th><th class="py-2">티켓</th>
+                    </tr></thead>
+                    <tbody id="det-body"><tr><td colspan="6" class="py-6 text-center text-slate-400">기록 없음</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- 미끼 관리 -->
+        <section class="mt-6 rounded-2xl bg-white border border-slate-200 p-5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <h2 class="font-bold">미끼 관리</h2>
+                <div class="flex flex-wrap gap-2 text-xs" id="ht-chips"></div>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2 mt-3">
+                <select id="ht-type" onchange="onTypeChange()" class="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50">
+                    <option value="account">미끼 계정 (DB 회원 표)</option>
+                    <option value="api_key">가짜 관리자 키 (관리자 페이지)</option>
+                </select>
+                <input id="ht-username" placeholder="미끼 계정명 (예: sys_ops)" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm">
+                <button onclick="createToken()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-700">미끼 심기</button>
+            </div>
+            <div id="ht-suggest" class="flex flex-wrap items-center gap-2 mt-2 text-xs">
+                <span class="text-slate-400">추천 이름</span>
+                <span id="ht-suggest-list" class="flex flex-wrap gap-2"></span>
+                <button onclick="loadSuggest()" class="text-slate-500 hover:text-slate-900 underline underline-offset-2">다른 추천</button>
+            </div>
+            <p id="ht-msg" class="text-xs mt-2 text-slate-500"></p>
+            <div class="overflow-x-auto mt-3">
+                <table class="w-full text-sm whitespace-nowrap">
+                    <thead><tr class="text-left text-xs text-slate-400 border-b">
+                        <th class="py-2 pr-3">번호</th><th class="py-2 pr-3">종류</th><th class="py-2 pr-3">값</th>
+                        <th class="py-2 pr-3">심은 위치</th><th class="py-2 pr-3">상태</th><th class="py-2"></th>
+                    </tr></thead>
+                    <tbody id="ht-body"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</main>
+
+<footer class="text-center text-xs text-slate-400 py-8">EngineSquare · 시나리오 01 허니토큰 기만 탐지</footer>
+
+<script>
+    const token = localStorage.getItem('token');
+    const H = () => ({ 'Authorization': `Bearer ${token}` });
+    const TYPE = { account: '미끼 계정', api_key: '관리자 키' };
+    const PLACE = { users_table: 'DB 회원 표', admin_console: '관리자 페이지' };
+    const STATUS = {
+        active:  ['대기', 'bg-emerald-50 text-emerald-700'],
+        used:    ['사용됨', 'bg-red-50 text-red-600'],
+        revoked: ['회수됨', 'bg-slate-100 text-slate-500'],
+    };
+    const ALARM_WINDOW_SEC = 300;   // 최근 5분 안에 쓰인 미끼가 있으면 경보 배너
+
+    function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function hms(iso) { return iso ? iso.slice(11, 19) : '-'; }
+    function dt(iso) { return iso ? iso.slice(5, 10).replace('-', '/') + ' ' + iso.slice(11, 19) : '-'; }
+    function dismissed() { try { return localStorage.getItem('ht_alarm_seen') || ''; } catch (e) { return ''; } }
+
+    async function init() {
+        if (!token) return deny('(로그인 안 됨)');
+        const r = await fetch('/api/auth/me', { headers: H() });
+        if (!r.ok) return deny('(로그인 만료)');
+        const me = await r.json();
+        if (!me.is_admin) return deny(`(현재 등급: ${me.role_label || me.role})`);
+        document.getElementById('view').classList.remove('hidden');
+        load();
+        loadSuggest();
+        setInterval(load, 10000);
+    }
+    function deny(why) {
+        document.getElementById('denied-why').innerText = why;
+        document.getElementById('denied').classList.remove('hidden');
+    }
+
+    async function load() {
+        const r = await fetch('/api/admin/honeytokens/overview', { headers: H() });
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('updated').innerText = hms(d.server_now);
+        renderKpi(d); renderAlarm(d); renderTimeline(d); renderDefender(d); renderHistory(d); renderTokens(d);
+    }
+
+    function renderKpi(d) {
+        document.getElementById('k-active').innerText = d.counts.active;
+        document.getElementById('k-hit').innerText = d.stats.detections;
+        document.getElementById('k-blocked').innerText = d.stats.blocked_ips;
+        document.getElementById('k-resp').innerText = d.stats.avg_response_sec ?? '-';
+        document.getElementById('k-hit-card').className = d.stats.detections > 0
+            ? 'rounded-2xl bg-slate-900 text-white p-5' : 'rounded-2xl bg-white border border-slate-200 p-5 text-slate-800';
+    }
+
+    function renderAlarm(d) {
+        const box = document.getElementById('alarm');
+        const last = d.detections[0];
+        const recent = last && (new Date(d.server_now) - new Date(last.used_at)) / 1000 <= ALARM_WINDOW_SEC;
+        const key = last ? last.token_id + last.used_at : '';
+        if (!recent || dismissed() === key) { box.classList.add('hidden'); return; }
+        box.dataset.key = key;
+        const blocked = last.blocked ? `IP 차단 완료${last.response_sec != null ? ` (${last.response_sec}초)` : ''}` : 'IP 차단 대기 중';
+        document.getElementById('alarm-text').innerText =
+            `${last.token_id} ${TYPE[last.token_type]} · 공격 IP ${last.ip} · ${hms(last.used_at)} 사용 → ${blocked}` +
+            (last.incident ? ` · 인시던트 #${last.incident.id}` : '');
+        box.classList.remove('hidden');
+    }
+    function dismissAlarm() {
+        const box = document.getElementById('alarm');
+        try { localStorage.setItem('ht_alarm_seen', box.dataset.key || ''); } catch (e) {}
+        box.classList.add('hidden');
+    }
+
+    function renderTimeline(d) {
+        const last = d.detections[0];
+        document.getElementById('tl-empty').classList.toggle('hidden', !!last);
+        document.getElementById('tl').classList.toggle('hidden', !last);
+        if (!last) { document.getElementById('tl-id').innerText = ''; return; }
+        document.getElementById('tl-id').innerText = `${last.token_id} · ${last.ip}`;
+        const step = (n, title, time, sub, color, done = true) => `
+            <li class="flex md:flex-col items-start md:items-center gap-3 md:text-center">
+                <span class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold ${done ? color : 'bg-slate-700 text-slate-400'}">${n}</span>
+                <div>
+                    <p class="font-semibold">${title}</p>
+                    <p class="mono text-sm ${done ? 'text-white' : 'text-slate-500'}">${time}</p>
+                    <p class="text-xs text-slate-400 mt-0.5">${sub}</p>
+                </div>
+            </li>`;
+        const plus = last.response_sec != null ? `+${last.response_sec}초` : '';
+        document.getElementById('tl-steps').innerHTML =
+            step(1, '미끼 사용', hms(last.used_at), `${esc(last.token_id)} ${TYPE[last.token_type]} · ${esc(last.token_value)}`, 'bg-blue-500') +
+            step(2, '탐지·기록', hms(last.used_at), 'security.log · Wazuh 룰 100500 · Graylog', 'bg-indigo-500') +
+            step(3, 'IP 차단', last.blocked ? `${hms(last.blocked_at)} <span class="text-red-300">${plus}</span>` : '대기',
+                 last.blocked ? `${esc(last.ip)} → 재접속 403` : 'n8n 자동 대응 대기', 'bg-red-500', last.blocked) +
+            step(4, '인시던트 티켓', last.incident ? `#${last.incident.id}` : '대기',
+                 last.incident ? `${esc(last.incident.severity)} · ${last.incident.status === 'open' ? '처리 중' : '종료'}` : '티켓 생성 대기',
+                 'bg-rose-500', !!last.incident);
+    }
+
+    function renderDefender(d) {
+        const last = d.detections[0];
+        const box = document.getElementById('def-box');
+        if (!last) { box.innerHTML = '아직 탐지된 공격이 없습니다.'; return; }
+        box.innerHTML = `
+            <p class="font-semibold">🚨 ${esc(last.token_id)} ${TYPE[last.token_type]} 사용 감지</p>
+            <p class="mt-1">공격 IP <span class="mono">${esc(last.ip)}</span> · ${dt(last.used_at)}</p>
+            <p class="mt-1">${last.blocked ? `IP 차단 완료${last.response_sec != null ? ` (${last.response_sec}초 만에)` : ''}` : 'IP 차단 대기 중'}
+            ${last.incident ? ` · 인시던트 #${last.incident.id}` : ''}</p>`;
+    }
+
+    function renderHistory(d) {
+        const body = document.getElementById('det-body');
+        if (!d.detections.length) { body.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-slate-400">기록 없음</td></tr>'; return; }
+        body.innerHTML = d.detections.map(x => `
+            <tr class="border-b last:border-0">
+                <td class="py-2 pr-3 mono text-xs">${dt(x.used_at)}</td>
+                <td class="py-2 pr-3">${esc(x.token_id)} <span class="text-slate-400">${TYPE[x.token_type]}</span></td>
+                <td class="py-2 pr-3 mono">${esc(x.ip)}</td>
+                <td class="py-2 pr-3">${x.blocked ? '<span class="px-2 py-0.5 rounded-full text-xs bg-red-50 text-red-600">차단됨</span>' : '<span class="text-slate-400 text-xs">해제됨/대기</span>'}</td>
+                <td class="py-2 pr-3 mono">${x.response_sec != null ? x.response_sec + '초' : '-'}</td>
+                <td class="py-2">${x.incident ? '#' + x.incident.id : '-'}</td>
+            </tr>`).join('');
+    }
+
+    function renderTokens(d) {
+        const c = d.counts;
+        document.getElementById('ht-chips').innerHTML =
+            `<span class="px-2 py-1 rounded-full bg-slate-100">전체 ${d.honeytokens.length}</span>` +
+            `<span class="px-2 py-1 rounded-full ${STATUS.active[1]}">대기 ${c.active}</span>` +
+            `<span class="px-2 py-1 rounded-full ${STATUS.used[1]}">사용됨 ${c.used}</span>` +
+            `<span class="px-2 py-1 rounded-full ${STATUS.revoked[1]}">회수됨 ${c.revoked}</span>`;
+        document.getElementById('ht-body').innerHTML = d.honeytokens.map(t => `
+            <tr class="border-b last:border-0 ${t.status === 'used' ? 'bg-red-50/60' : ''}">
+                <td class="py-2 pr-3 font-semibold">${esc(t.token_id)}</td>
+                <td class="py-2 pr-3">${TYPE[t.token_type] || esc(t.token_type)}</td>
+                <td class="py-2 pr-3 mono text-xs">${esc(t.token_value)}</td>
+                <td class="py-2 pr-3">${PLACE[t.placement] || esc(t.placement || '-')}</td>
+                <td class="py-2 pr-3"><span class="px-2 py-0.5 rounded-full text-xs ${STATUS[t.status][1]}">${STATUS[t.status][0]}</span></td>
+                <td class="py-2 text-right">${t.status === 'revoked' ? '' : `<button onclick="revokeToken('${esc(t.token_id)}')" class="text-xs text-slate-500 hover:text-red-600">회수</button>`}</td>
+            </tr>`).join('') || '<tr><td colspan="6" class="py-6 text-center text-slate-400">심어둔 미끼가 없습니다</td></tr>';
+    }
+
+    function onTypeChange() {
+        const isAccount = document.getElementById('ht-type').value === 'account';
+        document.getElementById('ht-username').classList.toggle('hidden', !isAccount);
+        document.getElementById('ht-suggest').classList.toggle('hidden', !isAccount);
+    }
+    async function loadSuggest() {
+        const r = await fetch('/api/admin/honeytokens/suggest', { headers: H() });
+        if (!r.ok) return;
+        const { names } = await r.json();
+        document.getElementById('ht-suggest-list').innerHTML = names.length
+            ? names.map(n => `<button onclick="pickName('${esc(n)}')" class="mono px-2 py-1 rounded-full bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700">${esc(n)}</button>`).join('')
+            : '<span class="text-slate-400">추천할 이름을 다 썼어요. 직접 입력해 주세요.</span>';
+    }
+    function pickName(n) { const el = document.getElementById('ht-username'); el.value = n; el.focus(); }
+    async function createToken() {
+        const token_type = document.getElementById('ht-type').value;
+        const username = document.getElementById('ht-username').value.trim();
+        const r = await fetch('/api/admin/honeytokens', {
+            method: 'POST', headers: { ...H(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token_type, username }),
+        });
+        const d = await r.json();
+        document.getElementById('ht-msg').innerText = d.msg || '';
+        if (r.ok) { document.getElementById('ht-username').value = ''; load(); loadSuggest(); }
+    }
+    async function revokeToken(id) {
+        const r = await fetch(`/api/admin/honeytokens/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: H() });
+        const d = await r.json();
+        document.getElementById('ht-msg').innerText = d.msg || '';
+        load();
+    }
+
+    init();
+</script>
+</body>
+</html>

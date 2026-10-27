@@ -1,20 +1,12 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# C extensions
 *.obj
 *.o
 *.a
 *.lib
-
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-.eggs/
 
 # Virtual environments
 .venv/
@@ -22,12 +14,22 @@ venv/
 env/
 ENV/
 
-# Testing & Coverage
+# Build, test, and IDE files
+build/
+dist/
+*.egg-info/
+.eggs/
 .pytest_cache/
 .coverage
 htmlcov/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
 
-# State / Database runtime artifacts
+# Runtime state
+security_events.jsonl
 state/
 *.db
 *.db-journal
@@ -35,10 +37,3 @@ state/
 *.db-shm
 dead_letter_logs.jsonl
 *.tmp
-
-# IDE / Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store

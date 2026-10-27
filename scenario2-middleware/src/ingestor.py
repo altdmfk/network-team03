@@ -125,6 +125,7 @@ class SecurityLogEvent(BaseModel):
             "timestamp",
             "client_ip",
             "event_type",
+            "api_key_id",
             "target_resource",
             "status_code",
             "severity",
@@ -175,6 +176,12 @@ class SecurityLogEvent(BaseModel):
         min_length=1,
         max_length=64,
         description="Security scenario event identifier (e.g., HONEYTOKEN_ACCESS, PORT_SCAN, BRUTE_FORCE, IDOR_ATTEMPT, IOT_CONTROL).",
+    )
+    api_key_id: str = Field(
+        default="unknown",
+        min_length=1,
+        max_length=256,
+        description="API key identifier used for response automation; this is an identifier, not the secret API key value.",
     )
     target_resource: str = Field(
         ...,
@@ -627,6 +634,15 @@ class WalLogBufferingMiddleware:
 
     @staticmethod
     def _serialize_event(event: SecurityLogEvent) -> Tuple[bytes, bytes, int]:
+        # api_key_id is an identifier needed by response automation, not the
+        # secret API key value. Older clients place it inside raw_payload, so
+        # promote it before redaction and keep the raw copy masked.
+        api_key_id = event.api_key_id
+        if api_key_id == "unknown" and isinstance(event.raw_payload, dict):
+            raw_api_key_id = event.raw_payload.get("api_key_id")
+            if raw_api_key_id not in (None, "", "[REDACTED]"):
+                api_key_id = str(raw_api_key_id)
+
         redacted_raw = redact_sensitive_data(
             event.raw_payload, patterns=REDACTION_PATTERNS
         )
@@ -639,6 +655,7 @@ class WalLogBufferingMiddleware:
             "timestamp": event.timestamp,
             "client_ip": event.client_ip,
             "event_type": event.event_type,
+            "api_key_id": api_key_id,
             "target_resource": event.target_resource,
             "status_code": event.status_code,
             "severity": event.severity,
