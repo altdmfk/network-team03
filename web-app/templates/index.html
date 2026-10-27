@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EngineSquare</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">E</span>EngineSquare</div>
+    <a class="login" href="/login">로그인</a>
+  </header>
+
+  <main class="landing">
+    <p class="eyebrow">ENGINE SQUARE SECURITY CENTER</p>
+    <h1>보안 위협을 <span>빠르게</span><br>탐지하고 대응하세요</h1>
+    <p class="intro">EngineSquare는 기업의 API와 IoT 환경에서 발생하는 보안 이벤트를<br>한곳에서 확인하고 대응하는 통합 보안 관제 플랫폼입니다.</p>
+
+    <div class="actions">
+      <a class="button primary" href="/dashboard">대시보드 보기</a>
+      <a class="button secondary" href="/board">게시판 확인</a>
+    </div>
+
+    <section class="scenarios">
+      <h2>시나리오별 보안 관제</h2>
+      <p>분산된 공격 흐름을 하나의 보안 관제 흐름으로 연결합니다.</p>
+      <div class="scenario-grid">
+        <article class="scenario-card selected" onclick="selectScenario(this)"><small>SCENARIO 01</small><h3>허니토큰 기만 탐지</h3><p>미끼 계정과 토큰 접근을 탐지하고 공격 IP를 차단합니다.</p></article>
+        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 02</small><h3>로그 버퍼링</h3><p>대량 트래픽에서도 로그를 안정적으로 수집하고 전달합니다.</p></article>
+        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 03</small><h3>유출 API 키 탐지</h3><p>비허용 IP의 API 키 사용을 탐지하고 자동 대응합니다.</p></article>
+        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 04</small><h3>킬체인 상관분석</h3><p>정찰부터 IoT 장비 공격까지 이어지는 흐름을 분석합니다.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer><strong>EngineSquare</strong> · API 플랫폼과 데이터센터 IoT 환경을 보호하는 통합 보안 관제</footer>
+  <script>
+    function selectScenario(card) {
+      document.querySelectorAll('.scenario-card').forEach((item) => item.classList.remove('selected'));
+      card.classList.add('selected');
+    }
+  </script>
+</body>
+</html>
