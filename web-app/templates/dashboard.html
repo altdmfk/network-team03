@@ -45,7 +45,7 @@
         </span>{{ pager(ticket_page, 'tickets_page', 'tickets', '인시던트 티켓') }}</span>
     </summary>
       {% if current_user.role == 'admin' %}
-      <form id="close-all-tickets-form" hidden method="post" action="{{ ticket_action_url() }}" data-confirm-title="열린 티켓 모두 종료" data-confirm-message="현재 페이지·필터와 관계없이 열린 티켓 {{ open_ticket_count }}건을 모두 종료할까요?" data-confirm-note="IP 차단과 API 키 상태는 변경되지 않습니다. 화면을 연 이후 새로 생성된 티켓은 제외됩니다." data-confirm-label="모두 종료">
+      <form id="close-all-tickets-form" hidden method="post" action="{{ ticket_action_url() }}" data-confirm-title="열린 티켓 모두 종료" data-confirm-message="열린 티켓 {{ open_ticket_count }}건을 모두 종료할까요?" data-confirm-note="페이지·필터와 관계없이 적용됩니다. IP 차단과 API 키 상태는 유지되며, 화면을 연 이후 생성된 티켓은 제외됩니다." data-confirm-label="모두 종료">
         <input type="hidden" name="csrf_token" value="{{ session.admin_csrf }}"><input type="hidden" name="action" value="close_all_tickets"><input type="hidden" name="targets" value="{{ ticket_bulk_token }}">
       </form>{% endif %}
     <div class="accordion-content table-scroll">
