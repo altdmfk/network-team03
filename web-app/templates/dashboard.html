@@ -50,7 +50,7 @@
       </form>{% endif %}
     <div class="accordion-content table-scroll">
       <table class="ticket-table">
-        <colgroup><col style="width:9%"><col style="width:11%"><col style="width:5%"><col style="width:7%"><col style="width:14%"><col style="width:4%"><col style="width:10%"><col style="width:12%"><col style="width:14%"><col class="dashboard-time-col"></colgroup>
+        <colgroup><col style="width:8%"><col style="width:10%"><col style="width:5%"><col style="width:6%"><col style="width:13%"><col style="width:4%"><col style="width:10%"><col style="width:18%"><col style="width:13%"><col style="width:13%"></colgroup>
         <thead>
           <tr><th>#</th><th>출발지 IP</th><th>심각도</th><th>상태</th><th>관련 이벤트</th><th>횟수</th><th>조치</th><th>제목</th><th>생성 시각</th><th>종료 시각</th></tr>
         </thead>
@@ -93,7 +93,7 @@
         <tbody>
           {% for event in recent_events %}
             <tr>
-              <td>{{ event.id }}</td><td>{{ event.scenario }}</td><td><code>{{ event.ip }}</code></td>
+              <td>{{ event_page.total - event_page.offset - loop.index0 }}</td><td>{{ event.scenario }}</td><td><code>{{ event.ip }}</code></td>
               <td><span class="decision {{ 'deny' if event.decision == '거부' else 'allow' if event.decision == '허용' else '' }}">{{ '⊘' if event.decision == '거부' else '✓' if event.decision == '허용' else '' }} {{ event.decision }}</span></td>
               <td class="severity-text {{ event.severity|lower }}">{{ event.severity }}</td>
               <td class="event-reason">{{ event.reason }}</td><td>{{ event.saved_at|display_time }}</td>

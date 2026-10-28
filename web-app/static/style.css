@@ -3,6 +3,7 @@
   --muted: #66738a;
   --line: #dfe5ef;
   --blue: #356cff;
+  --page-width: 1440px;
   --background: linear-gradient(112deg, #f0f2ff 0%, #f5f6ff 45%, #eefaf8 100%);
 }
 
@@ -20,7 +21,7 @@ a { color: inherit; text-decoration: none; }
 .user-name { color: #17233b; font-weight: 700; }
 .login { padding: 10px 18px; border: 1px solid #d5ddec; border-radius: 9px; background: rgba(255, 255, 255, .72); font-size: 13px; font-weight: 700; }
 
-.landing { max-width: 1180px; min-height: calc(100vh - 68px); margin: 0 auto; padding: 112px 30px 88px; text-align: center; }
+.landing { max-width: var(--page-width); min-height: calc(100vh - 68px); margin: 0 auto; padding: 112px 30px 88px; text-align: center; }
 .eyebrow { margin: 0 0 12px; color: #53617b; font-size: 11px; font-weight: 800; letter-spacing: .18em; }
 h1 { margin: 0; font-size: clamp(43px, 5.5vw, 72px); line-height: 1.1; letter-spacing: -.075em; }
 h1 span { display: inline-block; padding: 0 12px; border-radius: 16px; background: #edf2ff; color: var(--blue); }
@@ -46,7 +47,7 @@ h1 span { display: inline-block; padding: 0 12px; border-radius: 16px; backgroun
 footer { position: fixed; right: 0; bottom: 0; left: 0; padding: 14px 18px; background: rgba(255, 255, 255, .62); color: #66738a; font-size: 11px; text-align: center; }
 footer strong { color: #222; }
 
-.page-shell { max-width: 1280px; margin: 0 auto; padding: 76px 30px 110px; }
+.page-shell { max-width: var(--page-width); margin: 0 auto; padding: 76px 30px 110px; }
 .narrow-shell { max-width: 620px; }
 .page-heading { margin-bottom: 30px; }
 .page-heading h1 { font-size: clamp(34px, 4vw, 52px); letter-spacing: -.06em; }
@@ -141,6 +142,17 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .list-heading-line { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; white-space: nowrap; }
 .list-heading-line h2 { flex-shrink: 0; }
 .bulk-trigger { flex-shrink: 0; }
+.key-result-dialog { width: min(560px, calc(100vw - 32px)); margin: auto; padding: 24px; background: white; max-height: calc(100dvh - 40px); overflow-y: auto; }
+.key-result-dialog::backdrop { background: rgba(23,35,59,.38); }
+.key-result-dialog p, .key-result-dialog dd { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.key-result-dialog input { font: inherit; font-size: 13px; }
+.key-copy-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; font-size: 12px; }
+.key-management-actions { display: flex; align-items: center; gap: 4px; }
+.admin-page .key-management-actions .admin-action { padding: 4px 6px; font-size: 11px; }
+.key-details-button { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: var(--blue); font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-details-list { display: grid; grid-template-columns: 85px minmax(0, 1fr); gap: 10px; }
+.key-details-list dt { color: var(--muted); font-size: 13px; }
+.key-details-list dd { margin: 0; }
 @media (max-width: 850px) { .admin-grid { grid-template-columns: 1fr; } .admin-table { min-width: 760px; } }
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
 .metric-card { display: grid; gap: 5px; min-height: 92px; padding: 16px; border-left: 4px solid var(--blue); border-radius: 14px; background: rgba(255, 255, 255, .82); }
@@ -190,9 +202,10 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .event-table th { padding: 10px; background: #f8f9fb; color: #69758a; font-weight: 700; text-align: left; white-space: nowrap; }
 .event-table td { padding: 10px; border-top: 1px solid #edf0f4; vertical-align: middle; line-height: 1.25; }
 .event-table code { color: var(--ink); font-family: Consolas, monospace; font-size: 12px; }
-.dashboard-page .ticket-table, .dashboard-page .event-table { table-layout: fixed; min-width: 1060px; }
+.dashboard-page .ticket-table, .dashboard-page .event-table { table-layout: fixed; min-width: 1330px; }
 .dashboard-time-col { width: 14%; }
 .dashboard-page .ticket-table td, .dashboard-page .event-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dashboard-page .ticket-table td.ticket-title { white-space: normal; overflow: visible; text-overflow: clip; word-break: keep-all; overflow-wrap: anywhere; }
 .decision { display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .decision.deny { background: #ffe2e3; color: #e23945; }
 .decision.allow { background: #e4f7ef; color: #087443; }

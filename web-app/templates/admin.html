@@ -8,14 +8,17 @@
     <h1>보안 관리</h1><p>IP 접근과 API 키를 관리합니다. 변경사항은 다음 API 요청부터 반영됩니다.</p>
   </section>
   {% if issued %}
-  <section class="panel issued-key" role="status">
-    <h2>새 API 키가 발급되었습니다</h2>
+  <dialog id="issued-key-dialog" class="panel key-result-dialog" aria-labelledby="issued-key-title">
+    <div class="post-dialog-heading"><h2 id="issued-key-title">{{ '교체 API 키' if issued.replaced_from else '새 API 키' }}</h2><button type="button" class="dialog-close" data-close-key aria-label="키 확인 닫기">×</button></div>
     <p>원본 키는 이 화면에서 한 번만 표시됩니다. 지금 복사해 안전한 곳에 보관해 주세요.</p>
     <label for="new-key">API 키</label>
     <input id="new-key" type="text" value="{{ issued.new_api_key }}" readonly autocomplete="off" spellcheck="false">
+    <div class="key-copy-row"><button type="button" class="management-action" id="copy-issued-key">키 복사</button><span id="key-copy-status" role="status"></span></div>
     <p>식별자: <code>{{ issued.api_key_id }}</code></p>
+    {% if issued.replaced_from %}<p>이전 키: <code>{{ issued.replaced_from }}</code></p>{% endif %}
     <p>Postman 요청의 <code>X-API-Key</code> 헤더에 위 키를 입력하세요.</p>
-  </section>
+    <div class="dialog-actions"><button type="button" class="management-action" data-close-key>확인</button></div>
+  </dialog>
   {% endif %}
   <div class="admin-grid">
     <section class="panel write-panel key-issue-panel">
@@ -80,13 +83,16 @@
       <colgroup><col class="key-name-col"><col class="key-id-col"><col class="key-status-col"><col class="key-ip-col"><col class="key-time-col"><col class="key-time-col"><col class="key-action-col"></colgroup>
       <thead><tr><th>이름</th><th>식별자</th><th>상태</th><th>허용 IP</th><th>발급 시각</th><th>폐기 시각</th><th>관리</th></tr></thead>
       <tbody>{% for key in keys %}<tr>
-        <td title="{{ key.label }}">{{ key.label }}</td><td title="{{ key.api_key_id }}">{{ key.api_key_id }}</td>
+        <td title="{{ key.label }}"><button type="button" class="key-details-button" data-key-label="{{ key.label }}" data-key-id="{{ key.api_key_id }}" data-key-source="{{ key.replaced_from or '' }}" data-key-incident="{{ key.replacement_incident_id or '' }}" data-key-reason="{{ key.revoked_reason or '' }}">{{ '[교체] ' if key.replaced_from else '' }}{{ key.label }}</button></td><td title="{{ key.api_key_id }}">{{ key.api_key_id }}</td>
         <td><span class="status {{ 'normal' if key.status == 'active' else 'warning' }}">{{ '활성' if key.status == 'active' else '폐기' }}</span></td>
         <td title="{{ key.allowed_ips|join(', ') }}">{{ key.allowed_ips|join(', ') }}</td>
         <td>{{ key.created_at|display_time }}</td><td>{{ key.revoked_at|display_time }}</td>
-        <td>{% if key.status == 'active' %}<form method="post" data-confirm-title="API 키 폐기" data-confirm-message="이 키를 폐기할까요?" data-confirm-note="폐기하면 더 이상 사용할 수 없습니다." data-confirm-label="폐기">{{ csrf() }}
+        <td>{% if key.status == 'active' %}<div class="key-management-actions">
+          {% if key.can_claim %}<form method="post" data-confirm-title="교체 키 확인" data-confirm-message="새 원본 키를 확인할까요?" data-confirm-note="한 번만 표시되므로 지금 복사해 보관해 주세요." data-confirm-label="키 확인">{{ csrf() }}<input type="hidden" name="action" value="claim_key"><input type="hidden" name="api_key_id" value="{{ key.api_key_id }}"><button class="admin-action" type="submit">새 키 확인</button></form>
+          {% else %}<form method="post" data-confirm-title="새 키로 교체" data-confirm-message="이 키를 폐기하고 새 키로 교체할까요?" data-confirm-note="기존 키는 즉시 사용할 수 없게 됩니다. 새 원본 키를 한 번 표시합니다. IP 차단은 유지됩니다." data-confirm-label="교체">{{ csrf() }}<input type="hidden" name="action" value="replace_key"><input type="hidden" name="api_key_id" value="{{ key.api_key_id }}"><button class="admin-action" type="submit">새 키로 교체</button></form>{% endif %}
+          <form method="post" data-confirm-title="API 키 폐기" data-confirm-message="이 키를 폐기할까요?" data-confirm-note="폐기하면 더 이상 사용할 수 없습니다." data-confirm-label="폐기">{{ csrf() }}
           <input type="hidden" name="action" value="revoke_key"><input type="hidden" name="api_key_id" value="{{ key.api_key_id }}">
-          <button class="admin-action danger-action" type="submit">폐기</button></form>{% else %}—{% endif %}</td>
+          <button class="admin-action danger-action" type="submit">폐기</button></form></div>{% else %}—{% endif %}</td>
       </tr>{% else %}<tr><td colspan="7" class="empty-state">발급된 API 키가 없습니다.</td></tr>{% endfor %}</tbody>
     </table></div>
   </details>
@@ -106,4 +112,10 @@
     </table></div>
   </details>
 </main>
+<dialog id="key-details-dialog" class="panel key-result-dialog" aria-labelledby="key-details-title">
+  <div class="post-dialog-heading"><h2 id="key-details-title">API 키 정보</h2><button type="button" class="dialog-close" id="close-key-details" aria-label="키 정보 닫기">×</button></div>
+  <dl class="key-details-list"><dt>이름</dt><dd id="key-detail-label"></dd><dt>식별자</dt><dd id="key-detail-id"></dd><dt>교체 전 키</dt><dd id="key-detail-source"></dd><dt>관련 티켓</dt><dd id="key-detail-incident"></dd><dt>폐기 사유</dt><dd id="key-detail-reason"></dd></dl>
+  <p class="admin-help">키 이름을 누르면 이 정보를 확인할 수 있습니다. 기존 발급 기록에는 교체 연결 정보가 없을 수 있습니다.</p>
+</dialog>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='key-delivery.js') }}" defer></script>{% endblock %}

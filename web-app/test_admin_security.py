@@ -7,10 +7,14 @@ import sys
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
+from tempfile import TemporaryDirectory
 
 from security_store import SecurityStore
 from pagination import Page
 from werkzeug.security import check_password_hash
+import pymysql
+from incident_store import initialize_incidents
 
 
 def load(name, path):
@@ -40,6 +44,11 @@ class AdminSecurityTest(unittest.TestCase):
         self.api = api.app.test_client()
         self.logs = patch.object(api, "write_security_log")
         self.logs.start()
+        original_respond = api.security_store.respond
+        isolated_response = patch.object(api.security_store, "respond", side_effect=lambda key, reason, ip, incident:
+                                         original_respond(key, reason, ip, incident or "INC-API-TEST"))
+        isolated_response.start()
+        self.addCleanup(isolated_response.stop)
 
     def tearDown(self):
         self.logs.stop()
@@ -199,6 +208,50 @@ class AdminSecurityTest(unittest.TestCase):
         again = self.api.post("/automation/revoke-key", json=payload).get_json()
         self.assertIsNone(again["new_api_key"])
         self.assertEqual(len([key for key in self.store.keys() if key["label"] == self.label]), 2)
+
+    def test_replacement_secret_is_encrypted_and_claimed_once(self):
+        original = self.store.issue(self.label, self.ip)
+        result = self.store.respond(original["api_key_id"], "not_allowed_ip", "unknown", "INC-API-TEST")
+        replacement_id = result["new_api_key_id"]
+        record = self.store.find_by_id(replacement_id)
+        self.assertEqual(record["replaced_from"], original["api_key_id"])
+        self.assertTrue(record["can_claim"])
+        self.assertNotIn("delivery_token", record)
+        with self.store.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT delivery_token FROM api_keys WHERE api_key_id=%s", (replacement_id,))
+            encrypted = cursor.fetchone()["delivery_token"]
+            self.assertNotIn(result["new_api_key"], encrypted)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claimed = list(pool.map(lambda _: SecurityStore().claim_replacement(replacement_id), range(2)))
+        self.assertEqual(sum(item is not None for item in claimed), 1)
+        self.assertEqual(next(item for item in claimed if item)["new_api_key"], result["new_api_key"])
+        self.assertFalse(self.store.find_by_id(replacement_id)["can_claim"])
+
+    def test_admin_can_claim_or_replace_but_member_cannot(self):
+        original = self.store.issue(self.label, self.ip)
+        result = self.store.respond(original["api_key_id"], "not_allowed_ip", "unknown", "INC-API-TEST")
+        replacement_id = result["new_api_key_id"]
+        with self.client.session_transaction() as session:
+            session["user"] = self.member
+            session["admin_csrf"] = "test-token"
+        self.assertEqual(self.post("claim_key", api_key_id=replacement_id).status_code, 403)
+        self.login_admin()
+        claimed = self.post("claim_key", api_key_id=replacement_id)
+        self.assertEqual(claimed.status_code, 200)
+        self.assertIn(result["new_api_key"], claimed.text)
+        self.assertEqual(claimed.headers["Cache-Control"], "no-store")
+        self.assertNotIn(result["new_api_key"], self.client.get("/admin").text)
+        replaced = self.post("replace_key", api_key_id=replacement_id)
+        self.assertEqual(replaced.status_code, 200)
+        raw = re.search(r'id="new-key"[^>]*value="([^"]+)"', replaced.text).group(1)
+        self.assertEqual(self.store.find_by_id(replacement_id)["status"], "revoked")
+        self.assertEqual(self.store.find(raw)["replaced_from"], replacement_id)
+
+    def test_revoked_pending_key_cannot_be_claimed(self):
+        original = self.store.issue(self.label, self.ip)
+        result = self.store.respond(original["api_key_id"], "not_allowed_ip", "unknown", "INC-API-TEST")
+        self.store.revoke(result["new_api_key_id"])
+        self.assertIsNone(self.store.claim_replacement(result["new_api_key_id"]))
 
 
 class RegistrationTest(unittest.TestCase):
@@ -418,6 +471,152 @@ class BulkManagementTest(unittest.TestCase):
         self.assertEqual(self.client.post("/dashboard/tickets", data={"action": "close_all_tickets", "targets": "invalid", "csrf_token": self.csrf}).status_code, 400)
         self.assertEqual(self.client.post("/dashboard/tickets", data={"action": "close_ticket", "ticket_id": self.ids[0]}).status_code, 400)
         self.assertEqual(self.ticket_rows()[self.ids[0]]["status"], "열림")
+
+
+class IncidentPersistenceTest(unittest.TestCase):
+    def setUp(self):
+        self.connection = SecurityStore().connect()
+        self.addCleanup(self.connection.close)
+        with self.connection.cursor() as cursor:
+            for table in ("incident_tickets", "security_events", "blocked_ips", "incident_registry", "incident_counters", "api_keys"):
+                cursor.execute(f"SHOW CREATE TABLE {table}")
+                statement = cursor.fetchone()["Create Table"].replace("CREATE TABLE", "CREATE TEMPORARY TABLE", 1)
+                cursor.execute(statement)
+            initialize_incidents(cursor)
+        self.db = web.MySQLConnection(self.connection)
+        self.get_db = patch.object(web, "get_db", return_value=self.db)
+        self.get_db.start()
+        connection = self.connection
+        class ConnectionContext:
+            def __enter__(self): return connection
+            def __exit__(self, *_args): return False
+        self.api_connection = patch.object(api.security_store, "connect", return_value=ConnectionContext())
+        self.api_connection.start()
+        self.logs = patch.object(api, "write_security_log")
+        self.logs.start()
+        self.client = web.app.test_client()
+        self.api_client = api.app.test_client()
+
+    def tearDown(self):
+        self.get_db.stop()
+        self.api_connection.stop()
+        self.logs.stop()
+        # addCleanup closes the connection and discards its temporary tables.
+
+    def send(self, key, identifier=None):
+        return self.client.post("/api/security-events", json={"event_type": "api_key_compromised",
+            "api_key_id": key, "client_ip": "192.0.2.234", "incident_id": identifier,
+            "decision": "거부", "reason": "integration-test"})
+
+    def count(self, table):
+        with self.connection.cursor() as cursor:
+            cursor.execute(f"SELECT COUNT(*) AS total FROM {table}")
+            return cursor.fetchone()["total"]
+
+    def test_repeats_commit_but_conflicting_ids_do_not_partially_save(self):
+        first = self.send("key-A")
+        self.assertEqual(first.status_code, 201)
+        identifier = first.get_json()["event"]["incident_id"]
+        with patch.object(self.db, "commit", wraps=self.db.commit) as commit:
+            self.assertEqual(self.send("key-A", identifier).status_code, 201)
+            self.assertEqual(commit.call_count, 1)
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT occurrence_count FROM incident_tickets WHERE id=%s", (identifier,))
+            self.assertEqual(cursor.fetchone()["occurrence_count"], 2)
+        self.assertEqual(self.count("security_events"), 2)
+        conflict = self.send("key-B", identifier)
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.get_json()["error"], "incident_conflict")
+        self.assertEqual(self.count("security_events"), 2)
+        second = self.send("key-B")
+        self.assertEqual(second.status_code, 201)
+        self.assertNotEqual(second.get_json()["event"]["incident_id"], identifier)
+        self.assertEqual(self.count("incident_tickets"), 2)
+
+    def test_save_failure_rolls_back_ticket_counter_and_event(self):
+        execute = self.db.execute
+        def fail_event(query, params=None):
+            if query.startswith("INSERT INTO security_events"):
+                raise pymysql.IntegrityError(1062, "simulated failure")
+            return execute(query, params)
+        with patch.object(self.db, "execute", side_effect=fail_event):
+            self.assertEqual(self.send("key-A").status_code, 409)
+        for table in ("incident_tickets", "security_events", "blocked_ips", "incident_registry"):
+            self.assertEqual(self.count(table), 0)
+        self.assertEqual(self.send("key-A").get_json()["event"]["incident_id"], "INC-API-001")
+
+    def test_api_restart_preserves_identity_and_dashboard_receives_same_id(self):
+        for index in range(2):
+            api.INCIDENTS.clear()  # Simulate losing the API process's in-memory incident history.
+            issued = api.security_store.issue("temporary-incident-test", "127.0.0.1")
+            response = self.api_client.post("/automation/revoke-key", json={"api_key_id": issued["api_key_id"], "client_ip": "192.0.2.234"})
+            self.assertEqual(response.status_code, 200)
+            identifier = response.get_json()["incident"]["incident_id"]
+            self.assertEqual(identifier, f"INC-API-{index + 1:03d}")
+            stored = self.send(issued["api_key_id"], identifier)
+            self.assertEqual(stored.status_code, 201)
+            self.assertEqual(stored.get_json()["event"]["incident_id"], identifier)
+        self.assertEqual(self.count("incident_tickets"), 2)
+        api.INCIDENTS.clear()
+        repeated = self.api_client.post("/automation/revoke-key", json={"api_key_id": issued["api_key_id"], "client_ip": "192.0.2.234"})
+        self.assertEqual(repeated.get_json()["incident"]["incident_id"], identifier)
+        self.assertEqual(self.send(issued["api_key_id"], identifier).status_code, 201)
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT occurrence_count FROM incident_tickets WHERE id=%s", (identifier,))
+            self.assertEqual(cursor.fetchone()["occurrence_count"], 2)
+
+
+
+    def test_blocked_requests_count_once_and_different_active_keys_alert(self):
+        first = api.security_store.issue("temporary-blocked-A", "127.0.0.1")
+        second = api.security_store.issue("temporary-blocked-B", "127.0.0.1")
+        api.security_store.block("192.0.2.234", "temporary-test")
+        self.logs.stop()
+        with TemporaryDirectory() as directory, patch.object(api, "LOG_FILE", Path(directory) / "events.jsonl"), \
+             patch.object(api, "_forward_to_middleware", return_value=True) as forward, patch("builtins.print"):
+            for key in (first, first, second):
+                response = self.api_client.get("/api/data", headers={"X-API-Key": key["new_api_key"], "X-Demo-Client-IP": "192.0.2.234"})
+                self.assertEqual(response.status_code, 403)
+            self.assertEqual([call.args[0]["event_type"] for call in forward.call_args_list],
+                             ["api_key_compromised", "api_request_blocked", "api_key_compromised"])
+        self.assertEqual(self.count("security_events"), 3)
+        self.assertEqual(self.count("incident_tickets"), 2)
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT id,occurrence_count FROM incident_tickets WHERE api_key_id=%s", (first["api_key_id"],))
+            ticket = cursor.fetchone()
+            self.assertEqual(ticket["occurrence_count"], 2)
+        for _ in range(2):
+            self.assertEqual(self.send(first["api_key_id"], ticket["id"]).status_code, 200)
+        self.assertEqual(self.count("security_events"), 3)
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT occurrence_count FROM incident_tickets WHERE id=%s", (ticket["id"],))
+            self.assertEqual(cursor.fetchone()["occurrence_count"], 2)
+        api.security_store.revoke(second["api_key_id"])
+        event = {"event_type": "api_key_compromised", "timestamp": api.utc_timestamp(),
+                 "api_key_id": second["api_key_id"], "client_ip": "192.0.2.234", "detection_reason": "blocked_ip"}
+        self.assertFalse(api.security_store.record_denied_request(event))
+
+    def test_allowed_api_requests_are_saved_without_tickets_or_blocks(self):
+        issued = api.security_store.issue("temporary-allowed-test", "127.0.0.1")
+        self.logs.stop()
+        with TemporaryDirectory() as directory, patch.object(api, "LOG_FILE", Path(directory) / "events.jsonl"), \
+             patch.object(api, "_forward_to_middleware", return_value=True) as forward, patch("builtins.print"):
+            for _ in range(2):
+                response = self.api_client.get("/api/data", headers={"X-API-Key": issued["new_api_key"]})
+                self.assertEqual(response.status_code, 200)
+            self.assertEqual(forward.call_count, 2)
+            self.assertNotIn(issued["new_api_key"], api.LOG_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(self.count("security_events"), 2)
+        self.assertEqual(self.count("incident_tickets"), 0)
+        self.assertEqual(self.count("blocked_ips"), 0)
+        with self.client.session_transaction() as session:
+            session["user"] = "admin"
+        with patch.object(web, "render_template", wraps=web.render_template) as render:
+            response = self.client.get("/dashboard?event_decision=allowed")
+            self.assertEqual(response.status_code, 200)
+            events = render.call_args.kwargs["recent_events"]
+            self.assertEqual(len(events), 2)
+            self.assertTrue(all(event["decision"] == "허용" and event["scenario"] == "정상 API 요청" for event in events))
 
 
 class PaginationBoundaryTest(unittest.TestCase):
