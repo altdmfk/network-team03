@@ -1,0 +1,9 @@
+{% macro pager(page, parameter, anchor, label) %}
+<span class="pagination" role="navigation" aria-label="{{ label }} 페이지 이동">
+  {% if page.number > 1 %}<a href="{{ page_url(parameter, page.number - 1, anchor) }}">이전</a>
+  {% else %}<span class="disabled" aria-disabled="true">이전</span>{% endif %}
+  <span aria-live="polite">{{ page.number }} / {{ page.pages }}페이지</span>
+  {% if page.number < page.pages %}<a href="{{ page_url(parameter, page.number + 1, anchor) }}">다음</a>
+  {% else %}<span class="disabled" aria-disabled="true">다음</span>{% endif %}
+</span>
+{% endmacro %}

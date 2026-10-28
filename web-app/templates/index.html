@@ -9,7 +9,16 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="mark">E</span>EngineSquare</div>
-    <a class="login" href="/login">로그인</a>
+    <nav class="nav-links" aria-label="계정 메뉴">
+      {% if session.get('user') %}
+        <a href="{{ url_for('dashboard') }}">대시보드</a>
+        <span class="user-name">{{ session['user'] }}님</span>
+        <a class="login" href="{{ url_for('logout') }}">로그아웃</a>
+      {% else %}
+        <a href="{{ url_for('register') }}">회원가입</a>
+        <a class="login" href="{{ url_for('login') }}">로그인</a>
+      {% endif %}
+    </nav>
   </header>
 
   <main class="landing">

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}EngineSquare{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='lists.js') }}" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('index') }}"><span class="mark">E</span>EngineSquare</a>
+    <nav class="nav-links" aria-label="주 메뉴">
+      <a href="{{ url_for('dashboard') }}">대시보드</a>
+      <a href="{{ url_for('board') }}">게시판</a>
+      {% if current_user and current_user.role == 'admin' %}
+        <a href="{{ url_for('admin') }}">관리자</a>
+      {% endif %}
+      {% if session.get('user') %}
+        <span class="user-name">{{ session['user'] }}님</span>
+        <a class="login" href="{{ url_for('logout') }}">로그아웃</a>
+      {% else %}
+        <a href="{{ url_for('register') }}">회원가입</a>
+        <a class="login" href="{{ url_for('login') }}">로그인</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-wrap">
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+  <dialog id="action-confirm" class="panel site-confirm" aria-labelledby="confirm-title" aria-describedby="confirm-message confirm-note">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-message"></p><p id="confirm-note" class="admin-help"></p>
+    <div class="dialog-actions"><button class="management-action" type="button" id="confirm-cancel">취소</button><button class="management-action confirm-danger" type="button" id="confirm-apply">확인</button></div>
+  </dialog>
+  <script src="{{ url_for('static', filename='confirm.js') }}" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

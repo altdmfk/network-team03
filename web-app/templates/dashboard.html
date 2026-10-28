@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "pagination.html" import pager with context %}
+{% block title %}대시보드 · EngineSquare{% endblock %}
+{% block content %}
+<main class="page-shell app-page dashboard-page">
+  <section class="page-heading compact-heading">
+    <h1>보안 관제 대시보드</h1>
+    <p>보안 이벤트와 인시던트 처리 현황을 확인합니다.</p>
+  </section>
+
+  <section class="metric-grid">
+    <article class="metric-card"><span>전체 이벤트</span><strong>{{ total_events }}</strong></article>
+    <article class="metric-card danger"><span>주의 이벤트</span><strong>{{ warning_events }}</strong></article>
+    <article class="metric-card success"><span>처리 완료</span><strong>{{ completed_tickets }}</strong></article>
+    <article class="metric-card info"><span>차단 IP</span><strong>{{ blocked_ips }}</strong></article>
+  </section>
+
+  <section class="panel dashboard-panel ip-panel">
+    <div class="section-title"><h2>거부 상위 IP</h2><span>최근 탐지 기준</span></div>
+    <div class="top-ip-list">
+      {% for item in top_ips %}
+        <div class="top-ip-row">
+          <code>{{ item.ip }}</code>
+          <div class="ip-bar"><span style="width: {{ ((item.count / top_ip_max) * 100)|round(1) }}%"></span></div>
+          <b>{{ item.count }}회</b>
+        </div>
+      {% endfor %}
+      {% if not top_ips %}<p class="empty-state">아직 수집된 거부 이벤트가 없습니다.</p>{% endif %}
+    </div>
+  </section>
+
+  <details id="tickets" data-persist-accordion class="panel dashboard-accordion ticket-panel" open>
+    <summary>
+      <div>
+        <div class="list-heading-line"><h2>인시던트 티켓 <span class="list-count">{{ ticket_page.total }}건</span></h2>
+          {% if current_user.role == 'admin' %}<button class="management-action danger-action bulk-trigger" type="submit" form="close-all-tickets-form" {% if not open_ticket_count %}disabled{% endif %}>모두 종료</button>{% endif %}
+        </div>
+        <p>탐지된 보안 이벤트와 처리 상태를 확인합니다.</p>
+      </div>
+      <span class="summary-actions">
+        <span class="pagination key-filters" role="navigation" aria-label="인시던트 상태 필터">
+          {% for value, label in [('all', '전체'), ('open', '열림'), ('closed', '종료')] %}
+            <a href="{{ dashboard_filter_url('ticket_status', value) }}" {% if ticket_status == value %}class="selected" aria-current="true"{% endif %}>{{ label }}</a>
+          {% endfor %}
+        </span>{{ pager(ticket_page, 'tickets_page', 'tickets', '인시던트 티켓') }}</span>
+    </summary>
+      {% if current_user.role == 'admin' %}
+      <form id="close-all-tickets-form" hidden method="post" action="{{ ticket_action_url() }}" data-confirm-title="열린 티켓 모두 종료" data-confirm-message="현재 페이지·필터와 관계없이 열린 티켓 {{ open_ticket_count }}건을 모두 종료할까요?" data-confirm-note="IP 차단과 API 키 상태는 변경되지 않습니다. 화면을 연 이후 새로 생성된 티켓은 제외됩니다." data-confirm-label="모두 종료">
+        <input type="hidden" name="csrf_token" value="{{ session.admin_csrf }}"><input type="hidden" name="action" value="close_all_tickets"><input type="hidden" name="targets" value="{{ ticket_bulk_token }}">
+      </form>{% endif %}
+    <div class="accordion-content table-scroll">
+      <table class="ticket-table">
+        <colgroup><col style="width:9%"><col style="width:11%"><col style="width:5%"><col style="width:7%"><col style="width:14%"><col style="width:4%"><col style="width:10%"><col style="width:12%"><col style="width:14%"><col class="dashboard-time-col"></colgroup>
+        <thead>
+          <tr><th>#</th><th>출발지 IP</th><th>심각도</th><th>상태</th><th>관련 이벤트</th><th>횟수</th><th>조치</th><th>제목</th><th>생성 시각</th><th>종료 시각</th></tr>
+        </thead>
+        <tbody>
+          {% for ticket in tickets %}
+            <tr>
+              <td title="{{ ticket.id }}">{{ ticket.id }}</td><td><code>{{ ticket.ip }}</code></td>
+              <td><span class="severity {{ ticket.severity_class }}">{{ ticket.severity }}</span></td>
+              <td><span class="status {{ 'warning' if ticket.status == '열림' else 'normal' }}">{{ ticket.status }}</span></td>
+              <td title="{{ ticket.event }}"><code>{{ ticket.event }}</code></td><td>{{ ticket.occurrence_count }}회</td><td title="{{ ticket.action }}">{{ ticket.action }}</td>
+              <td class="ticket-title" title="{{ ticket.title }}">{{ ticket.title }}</td><td>{{ ticket.created_at|display_time }}</td>
+              <td>{% if ticket.status == '열림' and current_user.role == 'admin' %}
+                <form method="post" action="{{ ticket_action_url() }}" data-confirm-title="티켓 종료" data-confirm-message="{{ ticket.id }} 티켓을 종료할까요?" data-confirm-note="IP 차단과 API 키 상태는 유지됩니다." data-confirm-label="종료">
+                  <input type="hidden" name="csrf_token" value="{{ session.admin_csrf }}"><input type="hidden" name="action" value="close_ticket"><input type="hidden" name="ticket_id" value="{{ ticket.id }}">
+                  <button class="management-action danger-action" type="submit">종료</button>
+                </form>{% elif ticket.status == '열림' %}—{% else %}{{ ticket.closed_at|display_time }}{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details id="events" data-persist-accordion class="panel dashboard-accordion event-panel">
+    <summary>
+      <div><h2>최근 이벤트 <span class="list-count">{{ event_page.total }}건</span></h2><p>최근 수집된 보안 이벤트를 확인합니다.</p></div>
+      <span class="summary-actions">
+        <span class="pagination key-filters" role="navigation" aria-label="이벤트 판정 필터">
+          {% for value, label in [('all', '전체'), ('denied', '거부'), ('allowed', '허용')] %}
+            <a href="{{ dashboard_filter_url('event_decision', value) }}" {% if event_decision == value %}class="selected" aria-current="true"{% endif %}>{{ label }}</a>
+          {% endfor %}
+        </span>{{ pager(event_page, 'events_page', 'events', '최근 이벤트') }}</span>
+    </summary>
+    <div class="accordion-content table-scroll">
+      <table class="event-table">
+        <colgroup><col style="width:4%"><col style="width:21%"><col style="width:13%"><col style="width:8%"><col style="width:7%"><col style="width:33%"><col class="dashboard-time-col"></colgroup>
+        <thead>
+          <tr><th>#</th><th>시나리오</th><th>출발지 IP</th><th>판정</th><th>심각도</th><th>사유</th><th>저장 시각</th></tr>
+        </thead>
+        <tbody>
+          {% for event in recent_events %}
+            <tr>
+              <td>{{ event.id }}</td><td>{{ event.scenario }}</td><td><code>{{ event.ip }}</code></td>
+              <td><span class="decision {{ 'deny' if event.decision == '거부' else 'allow' if event.decision == '허용' else '' }}">{{ '⊘' if event.decision == '거부' else '✓' if event.decision == '허용' else '' }} {{ event.decision }}</span></td>
+              <td class="severity-text {{ event.severity|lower }}">{{ event.severity }}</td>
+              <td class="event-reason">{{ event.reason }}</td><td>{{ event.saved_at|display_time }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</main>
+{% endblock %}
