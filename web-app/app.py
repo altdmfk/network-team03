@@ -698,7 +698,18 @@ def dashboard():
     event_page = Page.create(db.execute("SELECT COUNT(*) FROM security_events" + event_where, event_params).fetchone()[0],
                              request.args.get("events_page"))
     ticket_rows = db.execute(
-        "SELECT * FROM incident_tickets" + ticket_where + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+        "SELECT * FROM incident_tickets" + ticket_where + """
+        ORDER BY CONVERT_TZ(
+            CAST(REPLACE(LEFT(created_at, 19), 'T', ' ') AS DATETIME),
+            CASE
+                WHEN RIGHT(created_at, 1) = 'Z' THEN '+00:00'
+                WHEN RIGHT(created_at, 6) REGEXP '^[+-][0-9]{2}:[0-9]{2}$'
+                    THEN RIGHT(created_at, 6)
+                ELSE '+09:00'
+            END,
+            '+00:00'
+        ) DESC, id DESC LIMIT ? OFFSET ?
+        """,
         ticket_params + (ticket_page.size, ticket_page.offset),
     ).fetchall()
     tickets = [dict(row) for row in ticket_rows]
