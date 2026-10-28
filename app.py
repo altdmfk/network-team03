@@ -24,6 +24,7 @@ app = Flask(__name__)
 # Both Flask servers share the same persistent security store.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "web-app"))
 from security_store import SecurityStore
+from incident_store import IncidentConflict
 
 security_store = SecurityStore()
 
@@ -63,6 +64,11 @@ def is_ip_blocked(ip):
 def block_storage_unavailable(error):
     app.logger.error("Security storage unavailable: %s", type(error).__name__)
     return jsonify(error="security_state_unavailable", message="Security storage is unavailable"), 503
+
+
+@app.errorhandler(IncidentConflict)
+def incident_conflict(error):
+    return jsonify(error="incident_conflict", message=str(error)), 409
 
 
 def client_ip():
@@ -145,12 +151,18 @@ def write_security_log(
         {field: value for field, value in optional_fields.items() if value is not None}
     )
 
+    notify = True
+    if event_type == "api_key_compromised":
+        notify = security_store.record_denied_request(event)
     SECURITY_EVENTS.append(event)
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOG_FILE.open("a", encoding="utf-8") as log_file:
         log_file.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    _forward_to_middleware(event)
+    if event_type == "api_request_allowed":
+        security_store.record_allowed_request(event)
+    forwarded = event if notify else {**event, "event_type": "api_request_blocked"}
+    _forward_to_middleware(forwarded)
     print(json.dumps(event, ensure_ascii=False), flush=True)
     return event
 
@@ -168,9 +180,9 @@ def revoke_api_key(api_key_id, reason="manual_demo_action"):
     return security_store.find_by_id(api_key_id)
 
 
-def create_incident(api_key_id, reason, blocked_ip=None, ip_blocked=False):
+def create_incident(api_key_id, reason, blocked_ip=None, ip_blocked=False, incident_id=None):
     incident = {
-        "incident_id": f"INC-API-{len(INCIDENTS) + 1:03d}",
+        "incident_id": incident_id,
         "event_type": "api_key_compromised",
         "api_key_id": api_key_id,
         "client_ip": blocked_ip,
@@ -187,7 +199,7 @@ def create_incident(api_key_id, reason, blocked_ip=None, ip_blocked=False):
 def automatic_response(api_key_id, reason, suspicious_ip):
     """Simulate the n8n workflow called after detection is confirmed."""
     response = security_store.respond(
-        api_key_id, reason, suspicious_ip, f"INC-API-{len(INCIDENTS) + 1:03d}"
+        api_key_id, reason, suspicious_ip, None
     )
     if response is None:
         return {"key_revoked": False, "new_api_key_id": None, "incident": None}
@@ -198,6 +210,7 @@ def automatic_response(api_key_id, reason, suspicious_ip):
         reason,
         blocked_ip=suspicious_ip if ip_blocked else None,
         ip_blocked=ip_blocked,
+        incident_id=response["incident_id"],
     )
     write_security_log(
         "api_response_completed",

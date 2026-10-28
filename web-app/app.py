@@ -12,7 +12,9 @@ from pymysql.cursors import DictCursor
 from werkzeug.security import check_password_hash, generate_password_hash
 from security_store import SecurityStore
 from pagination import Page
+from incident_store import assign_incident, IncidentConflict
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from cryptography.fernet import InvalidToken
 
 
 app = Flask(__name__)
@@ -121,6 +123,12 @@ class MySQLConnection:
         cursor = self._connection.cursor()
         return MySQLCursor(cursor).executemany(query, params)
 
+    def begin(self):
+        self._connection.begin()
+
+    def cursor(self):
+        return self._connection.cursor()
+
     def commit(self):
         self._connection.commit()
 
@@ -156,38 +164,6 @@ def display_time(value):
         return parsed.strftime("%Y-%m-%d %H:%M:%S")
     except ValueError:
         return raw.replace("T", " ")[:19]
-
-
-SCENARIOS = [
-    {"id": "01", "name": "허니토큰 기만 탐지", "status": "정상", "count": 7},
-    {"id": "02", "name": "로그 버퍼링", "status": "정상", "count": 12},
-    {"id": "03", "name": "유출 API 키 탐지", "status": "주의", "count": 3},
-    {"id": "04", "name": "킬체인 상관분석", "status": "정상", "count": 5},
-]
-
-TICKETS = [
-    {"id": "INC-API-003", "title": "비허용 IP의 API 키 사용", "ip": "10.10.10.10", "scenario": "시나리오 3", "event": "api_key_compromised", "action": "키 폐기·IP 차단", "status": "종료", "severity": "높음", "severity_class": "high", "created_at": "2026-10-27 11:01", "closed_at": "2026-10-27 11:02"},
-    {"id": "INC-API-002", "title": "반복 인증 실패 감지", "ip": "10.10.10.12", "scenario": "시나리오 1", "event": "authentication_failed", "action": "확인 필요", "status": "열림", "severity": "중간", "severity_class": "medium", "created_at": "2026-10-27 10:42", "closed_at": "-"},
-    {"id": "INC-API-001", "title": "로그 버퍼링 지연 확인", "ip": "192.168.3.8", "scenario": "시나리오 2", "event": "queue_lag", "action": "로그 재전송", "status": "종료", "severity": "낮음", "severity_class": "low", "created_at": "2026-10-27 09:18", "closed_at": "2026-10-27 09:20"},
-]
-
-TOP_IPS = [
-    {"ip": "10.10.10.10", "count": 240},
-    {"ip": "10.10.10.12", "count": 70},
-    {"ip": "192.168.3.8", "count": 15},
-    {"ip": "172.16.0.21", "count": 15},
-    {"ip": "172.16.0.30", "count": 13},
-]
-
-RECENT_EVENTS = [
-    {"id": 272, "user": "kry", "ip": "203.0.113.44", "decision": "거부", "severity": "High", "count": 6, "reason": "공격 출발지 자동 차단: 6회 로그인 실패(동일 IP)", "saved_at": "2026-10-16 13:41:56"},
-    {"id": 271, "user": "kry", "ip": "203.0.113.44", "decision": "거부", "severity": "High", "count": 6, "reason": "공격 출발지 자동 차단: 6회 로그인 실패(동일 IP)", "saved_at": "2026-10-16 12:23:58"},
-    {"id": 270, "user": "admin", "ip": "0.0.0.0", "decision": "거부", "severity": "Medium", "count": 0, "reason": "관리자 회원 삭제 1명(게시글 0개 포함)", "saved_at": "2026-10-15 14:30:29"},
-    {"id": 269, "user": "ahleum", "ip": "203.0.113.30", "decision": "거부", "severity": "High", "count": 5, "reason": "브루트포스 자동 잠금: 5회 로그인 실패", "saved_at": "2026-10-15 14:06:31"},
-    {"id": 268, "user": "lab", "ip": "203.0.113.30", "decision": "거부", "severity": "High", "count": 8, "reason": "브루트포스 자동 잠금: 8회 로그인 실패", "saved_at": "2026-10-15 11:11:22"},
-    {"id": 267, "user": "lsy", "ip": "203.0.113.96", "decision": "거부", "severity": "High", "count": 5, "reason": "공격 출발지 자동 차단: 5회 로그인 실패(동일 IP)", "saved_at": "2026-10-15 09:58:38"},
-    {"id": 266, "user": "lsy", "ip": "203.0.113.98", "decision": "거부", "severity": "High", "count": 5, "reason": "공격 출발지 자동 차단: 5회 로그인 실패(동일 IP)", "saved_at": "2026-10-15 09:54:08"},
-]
 
 
 def get_db():
@@ -287,26 +263,6 @@ def init_db():
             ("admin", admin_password_hash, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
     db.execute("UPDATE users SET role = 'admin' WHERE username = ?", ("admin",))
-    post_count = db.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
-    if post_count == 0:
-        db.executemany(
-            "INSERT INTO posts (title, content, author, created_at) VALUES (?, ?, ?, ?)",
-            [
-                (
-                    "시나리오 3 API 키 탐지 테스트",
-                    "비허용 IP에서 API 키를 사용했을 때 탐지와 자동 대응이 연결되는지 확인합니다.",
-                    "관리자",
-                    "2026-10-27",
-                ),
-                (
-                    "보안 이벤트 확인 안내",
-                    "Graylog와 n8n 연동 결과는 대시보드에서 확인할 수 있습니다.",
-                    "관리자",
-                    "2026-10-26",
-                ),
-            ],
-        )
-
     db.commit()
     db.close()
 
@@ -466,6 +422,19 @@ def admin():
             elif action == "revoke_key":
                 changed = security_store.revoke(request.form.get("api_key_id", ""))
                 flash("키를 폐기했습니다." if changed else "이미 폐기되었거나 존재하지 않는 키입니다.", "success")
+            elif action == "claim_key":
+                issued = security_store.claim_replacement(request.form.get("api_key_id", ""))
+                if issued is None:
+                    flash("이미 확인했거나 폐기된 키입니다. 원본이 없으면 새 키로 교체해 주세요.", "error")
+                else:
+                    session["admin_csrf"] = secrets.token_urlsafe(32)
+            elif action == "replace_key":
+                result = security_store.respond(request.form.get("api_key_id", ""), "administrator_replacement", "unknown", None)
+                if result and result["new_api_key_id"]:
+                    issued = security_store.claim_replacement(result["new_api_key_id"])
+                    session["admin_csrf"] = secrets.token_urlsafe(32)
+                else:
+                    flash("이미 폐기됐거나 존재하지 않는 키입니다.", "error")
             elif action == "revoke_all_keys":
                 targets = bulk_targets(request.form.get("targets", ""), "keys")
                 changed = security_store.revoke_many(targets)
@@ -521,8 +490,29 @@ def admin():
 
 @app.errorhandler(pymysql.MySQLError)
 def database_unavailable(error):
-    app.logger.error("Database unavailable: %s", type(error).__name__)
-    return "데이터베이스 연결을 확인해 주세요. 잠시 후 다시 시도해 주세요.", 503
+    app.logger.error("Database operation failed: %s code=%s", type(error).__name__, error.args[0] if error.args else "unknown")
+    return {"error": "database_operation_failed", "message": "데이터 저장 작업에 실패했습니다."}, 500
+
+
+@app.errorhandler(pymysql.OperationalError)
+def database_connection_error(error):
+    app.logger.error("Database operational failure: code=%s", error.args[0] if error.args else "unknown")
+    return {"error": "database_unavailable", "message": "데이터베이스 연결 또는 일시적인 처리 상태를 확인해 주세요."}, 503
+
+
+@app.errorhandler(pymysql.IntegrityError)
+def database_integrity_error(_error):
+    return {"error": "data_conflict", "message": "중복되거나 일치하지 않는 데이터로 저장하지 못했습니다."}, 409
+
+
+@app.errorhandler(IncidentConflict)
+def incident_conflict(error):
+    return {"error": "incident_conflict", "message": str(error)}, 409
+
+
+@app.errorhandler(InvalidToken)
+def key_delivery_unavailable(_error):
+    return "교체 키를 확인할 수 없습니다. API·웹 서버의 키 전달 암호화 설정을 확인해 주세요.", 503
 
 
 @app.post("/api/security-events")
@@ -548,103 +538,53 @@ def receive_security_event():
     }
 
     db = get_db()
-    matching_ticket = None
-    if event_type == "api_key_compromised":
-        matching_ticket = db.execute(
-            """
-            SELECT id FROM incident_tickets
-            WHERE event = ? AND ip = ? AND COALESCE(api_key_id, '') = COALESCE(?, '')
-            ORDER BY created_at ASC LIMIT 1
-            """,
-            (event_type, event["client_ip"], event["api_key_id"]),
-        ).fetchone()
-        if matching_ticket:
-            event["incident_id"] = matching_ticket["id"]
-        else:
-            supplied_id = str(event.get("incident_id") or "").strip()
-            if re.fullmatch(r"INC-API-\d{3}", supplied_id):
-                event["incident_id"] = supplied_id
+    db.begin()
+    try:
+        if event_type == "api_key_compromised":
+            with db.cursor() as cursor:
+                event["incident_id"] = assign_incident(cursor, event_type, event["client_ip"],
+                                                      event["api_key_id"], event["incident_id"])
+            direct = db.execute("SELECT id FROM security_events WHERE incident_id=? AND origin='api' ORDER BY id DESC LIMIT 1",
+                                (event["incident_id"],)).fetchone()
+            if direct:
+                # An automation callback enriches the actual request, never counts as a new request.
+                db.execute("UPDATE security_events SET action=? WHERE id=?", (event["action"], direct["id"]))
+                db.execute("UPDATE incident_tickets SET action=? WHERE id=?", (event["action"], event["incident_id"]))
+                db.commit()
+                event["id"] = direct["id"]
+                return {"status": "updated", "event": event}, 200
+            ticket = db.execute("SELECT id FROM incident_tickets WHERE id = ?", (event["incident_id"],)).fetchone()
+            if ticket:
+                db.execute("UPDATE incident_tickets SET occurrence_count = occurrence_count + 1 WHERE id = ?",
+                           (event["incident_id"],))
             else:
-                next_number = db.execute(
-                    """
-                    SELECT COALESCE(MAX(CAST(SUBSTR(id, 9) AS INTEGER)), 0) + 1
-                    FROM incident_tickets WHERE id LIKE 'INC-API-%'
-                    """
-                ).fetchone()[0]
-                event["incident_id"] = f"INC-API-{next_number:03d}"
-    cursor = db.execute(
-        """
-        INSERT INTO security_events (
-            event_type, incident_id, api_key_id, client_ip, severity,
-            status, decision, action, reason, event_timestamp, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event["event_type"], event["incident_id"], event["api_key_id"],
-            event["client_ip"], event["severity"], event["status"],
-            event["decision"], event["action"], event["reason"],
-            event["event_timestamp"], now,
-        ),
-    )
-    db.commit()
-    event["id"] = cursor.lastrowid
-
-    if event["decision"] == "거부" and event["client_ip"]:
-        db.execute(
-            """
-            INSERT INTO blocked_ips (ip, blocked_at, incident_id, reason)
-            VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                blocked_at = VALUES(blocked_at),
-                incident_id = VALUES(incident_id),
-                reason = VALUES(reason)
-            """,
-            (
-                event["client_ip"],
-                event["event_timestamp"],
-                event["incident_id"],
-                event["reason"],
-            ),
+                severity_class = {"높음": "high", "중간": "medium", "낮음": "low"}.get(event["severity"], "high")
+                db.execute(
+                    "INSERT INTO incident_tickets (id,title,ip,api_key_id,scenario,event,occurrence_count,"
+                    "action,status,severity,severity_class,created_at,closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (event["incident_id"], "비허용 IP의 API 키 사용", event["client_ip"], event["api_key_id"],
+                     "시나리오 3", event_type, 1, event["action"], event["status"], event["severity"],
+                     severity_class, event["event_timestamp"], now if event["status"] == "종료" else "-"),
+                )
+        cursor = db.execute(
+            "INSERT INTO security_events (event_type,incident_id,api_key_id,client_ip,severity,"
+            "status,decision,action,reason,event_timestamp,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (event_type, event["incident_id"], event["api_key_id"], event["client_ip"], event["severity"],
+             event["status"], event["decision"], event["action"], event["reason"], event["event_timestamp"], now),
         )
+        event["id"] = cursor.lastrowid
+        if event["decision"] == "거부" and event["client_ip"]:
+            db.execute(
+                "INSERT INTO blocked_ips (ip,blocked_at,incident_id,reason) VALUES (?,?,?,?) "
+                "ON DUPLICATE KEY UPDATE blocked_at=VALUES(blocked_at),incident_id=VALUES(incident_id),reason=VALUES(reason)",
+                (event["client_ip"], event["event_timestamp"], event["incident_id"], event["reason"]),
+            )
         db.commit()
-
-    if event["event_type"] == "api_key_compromised":
-        incident_id = event["incident_id"]
-        if matching_ticket is not None:
-            db.execute(
-                "UPDATE incident_tickets SET occurrence_count = occurrence_count + 1 WHERE id = ?",
-                (incident_id,),
-            )
-        else:
-            severity_class = {"높음": "high", "중간": "medium", "낮음": "low"}.get(
-                event["severity"], "high"
-            )
-            db.execute(
-                """
-                INSERT INTO incident_tickets (
-                    id, title, ip, api_key_id, scenario, event, occurrence_count,
-                    action, status, severity, severity_class, created_at, closed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    incident_id,
-                    "비허용 IP의 API 키 사용",
-                    event["client_ip"],
-                    event["api_key_id"],
-                    "시나리오 3",
-                    event["event_type"],
-                    1,
-                    event["action"],
-                    event["status"],
-                    event["severity"],
-                    severity_class,
-                    event["event_timestamp"],
-                    now if event["status"] == "종료" else "-",
-                ),
-            )
-            db.commit()
-
+    except Exception:
+        db.rollback()
+        raise
     return {"status": "stored", "event": event}, 201
+
 
 
 @app.route("/board", methods=["GET", "POST"])
@@ -772,6 +712,7 @@ def dashboard():
         event_params + (event_page.size, event_page.offset),
     ).fetchall()
     scenario_names = {
+        "api_request_allowed": "정상 API 요청",
         "api_key_compromised": "시나리오 3 · API 키 유출 탐지",
         "authentication_failed": "인증 실패 탐지",
         "queue_lag": "로그 버퍼링 지연",
