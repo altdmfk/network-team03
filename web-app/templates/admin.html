@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "pagination.html" import pager with context %}
+{% block title %}관리자 · EngineSquare{% endblock %}
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ session.admin_csrf }}">{% endmacro %}
+{% block content %}
+<main class="page-shell app-page admin-page">
+  <section class="page-heading compact-heading">
+    <h1>보안 관리</h1><p>IP 접근과 API 키를 관리합니다. 변경사항은 다음 API 요청부터 반영됩니다.</p>
+  </section>
+  {% if issued %}
+  <section class="panel issued-key" role="status">
+    <h2>새 API 키가 발급되었습니다</h2>
+    <p>원본 키는 이 화면에서 한 번만 표시됩니다. 지금 복사해 안전한 곳에 보관해 주세요.</p>
+    <label for="new-key">API 키</label>
+    <input id="new-key" type="text" value="{{ issued.new_api_key }}" readonly autocomplete="off" spellcheck="false">
+    <p>식별자: <code>{{ issued.api_key_id }}</code></p>
+    <p>Postman 요청의 <code>X-API-Key</code> 헤더에 위 키를 입력하세요.</p>
+  </section>
+  {% endif %}
+  <div class="admin-grid">
+    <section class="panel write-panel key-issue-panel">
+      <div class="section-title"><div><h2>API 키 발급</h2><p>허용 IP를 지정해 새로운 API 키를 발급합니다.</p></div><button class="admin-action" type="submit" form="key-issue-form">새 키 발급</button></div>
+      <form id="key-issue-form" method="post">{{ csrf() }}<input type="hidden" name="action" value="issue_key">
+        <label for="key-label">키 이름</label>
+        <input id="key-label" name="label" maxlength="100" placeholder="예: Postman 개발 테스트" required>
+        <label for="allowed-ips">허용 IP</label>
+        <textarea id="allowed-ips" name="allowed_ips" rows="2" placeholder="예: 127.0.0.1, 192.0.2.10" required></textarea>
+        <p class="admin-help">여러 IP는 쉼표·줄바꿈으로 구분합니다. 차단된 IP는 접근할 수 없습니다.</p>
+      </form>
+    </section>
+    <section class="panel write-panel bait-management-panel">
+      <div class="section-title"><h2>시나리오 관리</h2><span>연동 예정</span></div>
+      <p class="admin-help">시나리오별 보안 설정과 대응 기능을 관리하는 공간입니다.</p>
+      <p class="admin-help">필요한 관리 항목은 각 시나리오 연동 시 추가할 예정입니다.</p>
+    </section>
+  </div>
+  <details id="members" data-persist-accordion class="panel dashboard-accordion admin-list" open>
+    <summary>
+      <div><h2>회원 관리 <span class="list-count">{{ member_page.total }}명</span></h2><p>가입 회원을 확인하고 일반 회원·관리자 등급을 변경합니다.</p></div>
+      <span class="summary-actions">{{ pager(member_page, 'members_page', 'members', '회원 관리') }}</span>
+    </summary>
+    <div class="accordion-content table-scroll"><table class="ticket-table admin-table member-table">
+      <colgroup><col style="width:10%"><col style="width:30%"><col style="width:15%"><col style="width:29%"><col class="management-col"></colgroup>
+      <thead><tr><th>번호</th><th>아이디</th><th>등급</th><th>가입 시각</th><th>관리</th></tr></thead>
+      <tbody>{% for member in members %}<tr>
+        <td>{{ member_page.total - member_page.offset - loop.index0 }}</td><td title="{{ member.username }}">{{ member.username }}</td>
+        <td><span class="status {{ 'normal' if member.role == 'admin' else 'member-role' }}">{{ '관리자' if member.role == 'admin' else '일반 회원' }}</span></td>
+        <td>{{ member.created_at|display_time }}</td>
+        <td>{% if member.username == 'admin' %}<span class="admin-help">기본 관리자</span>
+          {% elif member.id == current_user.id %}<span class="admin-help">본인 계정</span>
+          {% else %}<form method="post" data-confirm-title="회원 등급 변경" data-confirm-message="{{ member.username }} 회원의 등급을 변경할까요?" data-confirm-label="변경">{{ csrf() }}
+            <input type="hidden" name="action" value="change_role"><input type="hidden" name="member_id" value="{{ member.id }}">
+            <input type="hidden" name="role" value="{{ 'member' if member.role == 'admin' else 'admin' }}">
+            <button class="admin-action danger-action" type="submit">{{ '일반 회원으로 변경' if member.role == 'admin' else '관리자로 승격' }}</button>
+          </form>{% endif %}</td>
+      </tr>{% else %}<tr><td colspan="5" class="empty-state">가입한 회원이 없습니다.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  <details id="keys" data-persist-accordion class="panel dashboard-accordion admin-list" open>
+    <summary>
+      <div>
+        <div class="list-heading-line"><h2>API 키 목록 <span class="list-count">{{ key_page.total }}개</span></h2>
+          <button class="management-action danger-action bulk-trigger" type="submit" form="revoke-all-keys-form" {% if not active_key_count %}disabled{% endif %}>모두 폐기</button>
+        </div>
+        <p>키 원본은 다시 조회할 수 없습니다. 폐기한 키는 새로 발급하세요.</p>
+      </div>
+      <span class="summary-actions">
+        <span class="pagination key-filters" role="navigation" aria-label="API 키 상태 필터">
+          {% for value, label in [('all', '전체'), ('revoked', '폐기'), ('active', '활성')] %}
+            <a href="{{ key_filter_url(value) }}" {% if key_status == value %}class="selected" aria-current="true"{% endif %}>{{ label }}</a>
+          {% endfor %}
+        </span>
+        {{ pager(key_page, 'keys_page', 'keys', 'API 키 목록') }}
+      </span>
+    </summary>
+      <form id="revoke-all-keys-form" hidden method="post" data-confirm-title="활성 키 모두 폐기" data-confirm-message="현재 페이지·필터와 관계없이 활성 API 키 {{ active_key_count }}개를 모두 폐기할까요?" data-confirm-note="사용 중인 키도 즉시 인증이 거부됩니다. 되돌릴 수 없으며 새 키를 발급해야 합니다. 화면을 연 이후 발급된 키는 제외됩니다." data-confirm-label="모두 폐기">
+        {{ csrf() }}<input type="hidden" name="action" value="revoke_all_keys"><input type="hidden" name="targets" value="{{ key_bulk_token }}">
+      </form>
+    <div class="accordion-content table-scroll"><table class="ticket-table admin-table key-table">
+      <colgroup><col class="key-name-col"><col class="key-id-col"><col class="key-status-col"><col class="key-ip-col"><col class="key-time-col"><col class="key-time-col"><col class="key-action-col"></colgroup>
+      <thead><tr><th>이름</th><th>식별자</th><th>상태</th><th>허용 IP</th><th>발급 시각</th><th>폐기 시각</th><th>관리</th></tr></thead>
+      <tbody>{% for key in keys %}<tr>
+        <td title="{{ key.label }}">{{ key.label }}</td><td title="{{ key.api_key_id }}">{{ key.api_key_id }}</td>
+        <td><span class="status {{ 'normal' if key.status == 'active' else 'warning' }}">{{ '활성' if key.status == 'active' else '폐기' }}</span></td>
+        <td title="{{ key.allowed_ips|join(', ') }}">{{ key.allowed_ips|join(', ') }}</td>
+        <td>{{ key.created_at|display_time }}</td><td>{{ key.revoked_at|display_time }}</td>
+        <td>{% if key.status == 'active' %}<form method="post" data-confirm-title="API 키 폐기" data-confirm-message="이 키를 폐기할까요?" data-confirm-note="폐기하면 더 이상 사용할 수 없습니다." data-confirm-label="폐기">{{ csrf() }}
+          <input type="hidden" name="action" value="revoke_key"><input type="hidden" name="api_key_id" value="{{ key.api_key_id }}">
+          <button class="admin-action danger-action" type="submit">폐기</button></form>{% else %}—{% endif %}</td>
+      </tr>{% else %}<tr><td colspan="7" class="empty-state">발급된 API 키가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  <details id="blocks" data-persist-accordion class="panel dashboard-accordion admin-list" open>
+    <summary>
+      <div><h2>차단 IP 목록 <span class="list-count">{{ block_page.total }}개</span></h2><p>IP 차단 해제는 폐기된 키를 복원하지 않습니다.</p></div>
+      <span class="summary-actions">{{ pager(block_page, 'blocks_page', 'blocks', '차단 IP 목록') }}</span>
+    </summary>
+    <div class="accordion-content table-scroll"><table class="ticket-table admin-table">
+      <colgroup><col style="width:16%"><col style="width:28%"><col style="width:23%"><col style="width:17%"><col class="management-col"></colgroup>
+      <thead><tr><th>IP 주소</th><th>차단 사유</th><th>차단 시각</th><th>인시던트</th><th>관리</th></tr></thead>
+      <tbody>{% for block in blocks %}<tr>
+        <td>{{ block.ip }}</td><td title="{{ block.reason }}">{{ block.reason }}</td><td>{{ block.blocked_at|display_time }}</td><td>{{ block.incident_id or '—' }}</td>
+        <td><form method="post">{{ csrf() }}<input type="hidden" name="action" value="unblock_ip"><input type="hidden" name="ip" value="{{ block.ip }}">
+          <button class="admin-action danger-action" type="submit">차단 해제</button></form></td>
+      </tr>{% else %}<tr><td colspan="5" class="empty-state">차단된 IP가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+</main>
+{% endblock %}

@@ -10,31 +10,26 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import json
 import os
+import sys
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, request
+import pymysql
 
 
 app = Flask(__name__)
 
-# Demo-only state. A real service would keep these values in a database or
-# cache. The field names used in emitted events are fixed by the project plan.
-API_KEYS = {
-    "test-key-01": {
-        # The dictionary key is the authentication secret.  It must never be
-        # written to security events or forwarded to Middleware.
-        "api_key_id": "key-001",
-        "status": "active",
-        "allowed_ips": {"127.0.0.1"},
-    },
-}
+# Both Flask servers share the same persistent security store.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "web-app"))
+from security_store import SecurityStore
+
+security_store = SecurityStore()
 
 REQUEST_COUNTS = defaultdict(int)
 SECURITY_EVENTS = []
 INCIDENTS = []
-BLOCKED_IPS = set()
 
 REQUEST_LIMIT = 5
 SUSPICIOUS_USER_AGENT_WORDS = ("kali", "sqlmap", "nikto", "masscan")
@@ -58,6 +53,16 @@ EVENT_SEVERITY = {
 
 def utc_timestamp():
     return datetime.now(timezone.utc).isoformat()
+
+
+def is_ip_blocked(ip):
+    return security_store.is_blocked(ip)
+
+
+@app.errorhandler(pymysql.MySQLError)
+def block_storage_unavailable(error):
+    app.logger.error("Security storage unavailable: %s", type(error).__name__)
+    return jsonify(error="security_state_unavailable", message="Security storage is unavailable"), 503
 
 
 def client_ip():
@@ -151,24 +156,16 @@ def write_security_log(
 
 
 def find_api_key(raw_api_key):
-    return API_KEYS.get(raw_api_key)
+    return security_store.find(raw_api_key)
 
 
 def find_api_key_by_id(api_key_id):
-    """Return ``(secret, record)`` for a non-secret identifier."""
-    for secret, record in API_KEYS.items():
-        if record.get("api_key_id") == api_key_id:
-            return secret, record
-    return None, None
+    return None, security_store.find_by_id(api_key_id)
 
 
 def revoke_api_key(api_key_id, reason="manual_demo_action"):
-    _secret, record = find_api_key_by_id(api_key_id)
-    if record is None:
-        return None
-    record["status"] = "revoked"
-    record["revoked_reason"] = reason
-    return record
+    security_store.revoke(api_key_id, reason)
+    return security_store.find_by_id(api_key_id)
 
 
 def create_incident(api_key_id, reason, blocked_ip=None, ip_blocked=False):
@@ -189,23 +186,12 @@ def create_incident(api_key_id, reason, blocked_ip=None, ip_blocked=False):
 
 def automatic_response(api_key_id, reason, suspicious_ip):
     """Simulate the n8n workflow called after detection is confirmed."""
-    secret, record = find_api_key_by_id(api_key_id)
-    if record is None:
+    response = security_store.respond(
+        api_key_id, reason, suspicious_ip, f"INC-API-{len(INCIDENTS) + 1:03d}"
+    )
+    if response is None:
         return {"key_revoked": False, "new_api_key_id": None, "incident": None}
-
-    record["status"] = "revoked"
-    record["revoked_reason"] = reason
-    new_api_key_id = f"{api_key_id}-renewed"
-    new_api_key = f"{secret}-renewed"
-    API_KEYS[new_api_key] = {
-        "api_key_id": new_api_key_id,
-        "status": "active",
-        "allowed_ips": set(record["allowed_ips"]),
-    }
-
-    ip_blocked = suspicious_ip not in {"unknown", "127.0.0.1"}
-    if ip_blocked:
-        BLOCKED_IPS.add(suspicious_ip)
+    ip_blocked = response["ip_blocked"]
 
     incident = create_incident(
         api_key_id,
@@ -222,15 +208,7 @@ def automatic_response(api_key_id, reason, suspicious_ip):
         action="key_revoked_and_ip_blocked",
         status="completed",
     )
-    return {
-        "key_revoked": True,
-        "new_api_key_id": new_api_key_id,
-        # This is returned only as the key-rotation result. It is not included
-        # in security events, Middleware payloads, Graylog, or Discord text.
-        "new_api_key": new_api_key,
-        "ip_blocked": ip_blocked,
-        "incident": incident,
-    }
+    return {**response, "incident": incident}
 
 
 def rejected_response(status_code, event_type, api_key_id, reason, message):
@@ -265,7 +243,7 @@ def protected_data():
     record = find_api_key(raw_api_key)
     api_key_id = record["api_key_id"] if record else "unknown"
 
-    if current_ip in BLOCKED_IPS:
+    if is_ip_blocked(current_ip):
         return rejected_response(
             403,
             "api_key_compromised",
@@ -361,7 +339,8 @@ def security_events():
 
 @app.get("/api/blocked-ips")
 def blocked_ips():
-    return jsonify(count=len(BLOCKED_IPS), blocked_ips=sorted(BLOCKED_IPS))
+    addresses = sorted(row["ip"] for row in security_store.blocks())
+    return jsonify(count=len(addresses), blocked_ips=addresses)
 
 
 @app.post("/automation/revoke-key")
@@ -372,13 +351,17 @@ def automation_revoke_key():
     reason = body.get("detection_reason", "suspicious_api_key_usage")
     suspicious_ip = body.get("client_ip") or "unknown"
 
-    if revoke_api_key(api_key_id, reason) is None:
+    if security_store.find_by_id(api_key_id) is None:
         return jsonify(error="not_found", message="Unknown API key"), 404
 
-    response = automatic_response(api_key_id, reason, suspicious_ip)
+    try:
+        response = automatic_response(api_key_id, reason, suspicious_ip)
+    except ValueError:
+        return jsonify(error="invalid_input", message="Invalid client IP"), 400
     return jsonify(response), 200
 
 
 if __name__ == "__main__":
+    security_store.initialize()
     # Dockerized n8n reaches the host API through host.docker.internal.
     app.run(host="0.0.0.0", port=5000, debug=False)

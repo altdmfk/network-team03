@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}게시판 · EngineSquare{% endblock %}
+{% block content %}
+<main class="page-shell app-page">
+  <section class="page-heading compact-heading">
+    <h1>보안 게시판</h1>
+    <p>팀의 테스트 내용과 보안 관련 안내를 공유합니다.</p>
+    <button class="button primary compose-open" type="button" id="open-compose" aria-haspopup="dialog" aria-controls="compose-dialog">글 작성</button>
+  </section>
+
+  <section class="panel post-list">
+    {% for post in posts %}
+      <article class="post-item">
+        <div>
+          <h2>{{ post.title }}</h2>
+          <p>{{ post.content }}</p>
+        </div>
+        <div class="post-meta">{{ post.author }} · {{ post.date }}</div>
+      </article>
+    {% endfor %}
+  </section>
+
+  <dialog class="panel write-panel post-dialog" id="compose-dialog" aria-labelledby="compose-title" data-open="{{ 'true' if compose_error else 'false' }}">
+    <div class="post-dialog-heading"><h2 id="compose-title">새 글 작성</h2><button class="dialog-close" type="button" data-close-compose aria-label="글 작성 닫기">×</button></div>
+    {% if compose_error %}<p class="dialog-error" role="alert">{{ compose_error }}</p>{% endif %}
+    <form method="post" action="{{ url_for('board') }}">
+      <input type="hidden" name="csrf_token" value="{{ session.board_csrf }}">
+      <label for="title">제목</label>
+      <input id="title" name="title" type="text" value="{{ draft_title or '' }}" required autofocus>
+      <label for="content">내용</label>
+      <textarea id="content" name="content" rows="6" required>{{ draft_content or '' }}</textarea>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close-compose>취소</button><button class="button primary" type="submit">등록하기</button></div>
+    </form>
+  </dialog>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='board.js') }}" defer></script>{% endblock %}
