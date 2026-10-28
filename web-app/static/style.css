@@ -135,7 +135,7 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .site-confirm { width: min(460px, calc(100vw - 32px)); margin: auto; padding: 24px; background: white; }
 .site-confirm::backdrop { background: rgba(23, 35, 59, .38); }
 .site-confirm h2 { margin: 0 0 16px; font-size: 20px; }
-.site-confirm p { line-height: 1.6; }
+.site-confirm p { line-height: 1.6; word-break: keep-all; overflow-wrap: break-word; }
 .site-confirm .confirm-danger { background: #d54a4a; border-color: #d54a4a; color: white; padding: 8px 14px; }
 .site-confirm #confirm-cancel { padding: 8px 14px; }
 .list-heading-line { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; white-space: nowrap; }
