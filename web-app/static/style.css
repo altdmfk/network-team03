@@ -105,7 +105,7 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .issued-key input { width: 100%; font-family: Consolas, monospace; }
 .issued-key p { overflow-wrap: anywhere; }
 .admin-page .admin-table th, .admin-page .admin-table td { white-space: nowrap; }
-.admin-page .key-table { table-layout: fixed; min-width: 1060px; }
+.admin-page .key-table { table-layout: fixed; min-width: 0; }
 .key-table .key-name-col { width: 13%; }
 .key-table .key-id-col { width: 16%; }
 .key-table .key-status-col { width: 8%; }
@@ -113,7 +113,7 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .key-table .key-time-col { width: 18.5%; }
 .key-table .key-action-col, .admin-table .management-col { width: 16%; }
 .admin-page .key-table td { height: 46px; overflow: hidden; text-overflow: ellipsis; }
-.admin-page .admin-table { table-layout: fixed; min-width: 1060px; }
+.admin-page .admin-table { table-layout: fixed; min-width: 0; }
 .admin-page .admin-table td { height: 46px; overflow: hidden; text-overflow: ellipsis; }
 .admin-page .admin-table th:last-child, .admin-page .admin-table td:last-child { text-align: left; }
 .admin-page .member-table td { height: 46px; overflow: hidden; text-overflow: ellipsis; }
@@ -202,8 +202,8 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .event-table th { padding: 10px; background: #f8f9fb; color: #69758a; font-weight: 700; text-align: left; white-space: nowrap; }
 .event-table td { padding: 10px; border-top: 1px solid #edf0f4; vertical-align: middle; line-height: 1.25; }
 .event-table code { color: var(--ink); font-family: Consolas, monospace; font-size: 12px; }
-.dashboard-page .ticket-table, .dashboard-page .event-table { table-layout: fixed; min-width: 1330px; }
-.dashboard-time-col { width: 14%; }
+.dashboard-page .ticket-table, .dashboard-page .event-table { table-layout: fixed; min-width: 0; }
+.dashboard-time-col { width: 13%; }
 .dashboard-page .ticket-table td, .dashboard-page .event-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-page .ticket-table td.ticket-title { white-space: normal; overflow: visible; text-overflow: clip; word-break: keep-all; overflow-wrap: anywhere; }
 .decision { display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
@@ -260,4 +260,40 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
   h1 { font-size: 42px; }
   .intro { font-size: 14px; }
   .metric-grid { grid-template-columns: 1fr; }
+}
+
+/* Let dashboard columns share the available panel width, including split views. */
+@media (max-width: 1400px) {
+  .dashboard-page .ticket-table th, .dashboard-page .event-table th,
+  .dashboard-page .ticket-table td, .dashboard-page .event-table td,
+  .admin-page .admin-table th, .admin-page .admin-table td {
+    padding: 9px 5px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    line-height: 1.45;
+  }
+  .dashboard-page .event-reason { min-width: 0; max-width: none; }
+  .dashboard-page .event-table col:nth-child(2) { width: 23% !important; }
+  .dashboard-page .event-table col:nth-child(3) { width: 16% !important; }
+  .dashboard-page .event-table col:nth-child(4) { width: 10% !important; }
+  .dashboard-page .event-table col:nth-child(5) { width: 9% !important; }
+  .dashboard-page .event-table col:nth-child(6) { width: 25% !important; }
+  .dashboard-page .ticket-table .status,
+  .dashboard-page .event-table .decision { padding: 4px; white-space: normal; }
+  .admin-page .key-details-button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+  .admin-page .key-management-actions { flex-wrap: wrap; }
+  .admin-page .admin-table .status,
+  .admin-page .admin-table .admin-action,
+  .admin-page .admin-table .management-action,
+  .dashboard-page .ticket-table .management-action {
+    max-width: 100%;
+    padding: 4px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
