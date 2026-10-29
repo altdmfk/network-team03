@@ -7,10 +7,12 @@ WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
 # warning / lockdown / unlock 호출은 이 토큰이 맞아야 처리됨
 AUTH_TOKEN = "CHANGE_ME_SHARED_SECRET"
 
-# 상태 LED (적색/녹색) 연결한 GPIO 번호
-# 정상: 초록만 켬 / 경고(1~2단계 탐지): 적+녹 동시(= 노랑으로 보임) / Lockdown: 적색만
-LED_RED_PIN = 2
+# 상태 LED 4색 전용 연결 (각자 220Ω 저항과 함께 GND로)
+# 파랑: 부팅/Wi-Fi 연결 중 / 초록: 정상 / 노랑: 경고(1~2단계 탐지) / 빨강: Lockdown(CRITICAL)
+LED_BLUE_PIN = 2
 LED_GREEN_PIN = 3
+LED_YELLOW_PIN = 5
+LED_RED_PIN = 6
 
 # 액티브 부저(SMG-A, 3.3~5V) 연결한 GPIO 번호
 # Lockdown(CRITICAL) 상태일 때만 경보음을 울림. 해제되면 자동으로 꺼짐

@@ -6,32 +6,49 @@ from machine import Pin
 
 import config
 
-led_red = Pin(config.LED_RED_PIN, Pin.OUT)
+led_blue = Pin(config.LED_BLUE_PIN, Pin.OUT)
 led_green = Pin(config.LED_GREEN_PIN, Pin.OUT)
+led_yellow = Pin(config.LED_YELLOW_PIN, Pin.OUT)
+led_red = Pin(config.LED_RED_PIN, Pin.OUT)
 buzzer = Pin(config.BUZZER_PIN, Pin.OUT)
 
-# status: "normal"(초록) / "warning"(적+녹=노랑, 1~2단계 탐지) / "locked"(적색, 킬체인 확정)
-state = {"status": "normal"}
+ALL_LEDS = (led_blue, led_green, led_yellow, led_red)
+
+# status: "booting"(파랑) / "normal"(초록) / "warning"(노랑, 1~2단계 탐지) / "locked"(빨강, 킬체인 확정)
+state = {"status": "booting"}
+
+
+def leds_off():
+    for led in ALL_LEDS:
+        led.value(0)
+
+
+def show_booting():
+    leds_off()
+    led_blue.value(1)
 
 
 def show_normal():
-    led_red.value(0)
+    leds_off()
     led_green.value(1)
 
 
 def show_warning():
-    led_red.value(1)
-    led_green.value(1)
+    leds_off()
+    led_yellow.value(1)
 
 
 def show_locked():
+    leds_off()
     led_red.value(1)
-    led_green.value(0)
 
 
 def apply_status(status):
     state["status"] = status
-    if status == "normal":
+    if status == "booting":
+        show_booting()
+        buzzer.value(0)
+    elif status == "normal":
         show_normal()
         buzzer.value(0)
     elif status == "warning":
@@ -43,17 +60,16 @@ def apply_status(status):
 
 
 def blink_once():
-    # device/control 정상 처리 시 짧게 한 번 깜빡여서 명령 수신을 눈으로 확인
-    led_green.value(0)
+    # device/control 정상 처리 시 파랑을 짧게 깜빡여서 명령 수신을 눈으로 확인 (상태 LED는 그대로 유지)
+    led_blue.value(1)
     time.sleep(0.15)
-    led_green.value(1)
+    led_blue.value(0)
 
 
 def apply_lockdown():
-    # 깜빡임 3회 + 부저 3번 울림 후 고정 적색 + 경보음 - Lockdown 적용을 시각/청각으로 구분
+    # 깜빡임 3회 + 부저 3번 울림 후 고정 빨강 + 경보음 - Lockdown 적용을 시각/청각으로 구분
     for _ in range(3):
-        led_red.value(0)
-        led_green.value(0)
+        leds_off()
         buzzer.value(0)
         time.sleep(0.15)
         led_red.value(1)
@@ -161,8 +177,9 @@ def handle_request(method, path, headers, body):
 
 
 def main():
-    apply_status("normal")
+    apply_status("booting")
     ip = connect_wifi()
+    apply_status("normal")
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
