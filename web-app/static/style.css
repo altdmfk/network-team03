@@ -41,7 +41,7 @@ h1 span { display: inline-block; padding: 0 12px; border-radius: 16px; backgroun
 .scenario-card small { color: var(--blue); font-family: Consolas, monospace; font-size: 11px; font-weight: 800; }
 .selected small { color: #9cb6ff; }
 .scenario-card h3 { margin: 12px 0 6px; font-size: 19px; letter-spacing: -.04em; }
-.scenario-card p { margin: 0; color: #66738a; font-size: 13px; line-height: 1.5; }
+.scenario-card p { margin: 0; color: #66738a; font-size: 13px; line-height: 1.5; word-break: keep-all; overflow-wrap: break-word; text-wrap: pretty; }
 .selected p { color: #c6c9d5; }
 
 footer { position: fixed; right: 0; bottom: 0; left: 0; padding: 14px 18px; background: rgba(255, 255, 255, .62); color: #66738a; font-size: 11px; text-align: center; }
