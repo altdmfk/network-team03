@@ -255,6 +255,18 @@ def init_db():
     if db.execute("SHOW COLUMNS FROM users LIKE 'role'").fetchone() is None:
         db.execute("ALTER TABLE users ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'member'")
 
+    # Align legacy titles only for confirmed disallowed-IP events.
+    db.execute("""
+        UPDATE incident_tickets AS ticket
+        SET title = '비허용 IP의 API 키 사용'
+        WHERE ticket.event = 'api_key_compromised'
+          AND ticket.title = 'API 키 이상 요청 탐지'
+          AND EXISTS (
+              SELECT 1 FROM security_events AS event
+              WHERE event.incident_id = ticket.id AND event.reason = 'not_allowed_ip'
+          )
+    """)
+
     admin_password_hash = generate_password_hash("1234")
     admin = db.execute("SELECT id FROM users WHERE username = ?", ("admin",)).fetchone()
     if admin is None:

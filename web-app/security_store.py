@@ -182,7 +182,7 @@ class SecurityStore:
                 cursor.execute("INSERT INTO incident_tickets (id,title,ip,api_key_id,scenario,event,occurrence_count,action,status,severity,severity_class,created_at,closed_at) "
                                "VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,'-') "
                                "ON DUPLICATE KEY UPDATE occurrence_count=occurrence_count+1",
-                               (identifier, "API 키 이상 요청 탐지", event["client_ip"], event["api_key_id"], "시나리오 3",
+                               (identifier, "비허용 IP의 API 키 사용" if event.get("detection_reason") == "not_allowed_ip" else "API 키 이상 요청 탐지", event["client_ip"], event["api_key_id"], "시나리오 3",
                                 "api_key_compromised", "요청 차단", "열림", "높음", "high", event["timestamp"]))
                 cursor.execute("INSERT INTO security_events (event_type,incident_id,api_key_id,client_ip,severity,status,decision,action,reason,event_timestamp,created_at,origin,alert_requested) "
                                "VALUES (%s,%s,%s,%s,'높음','열림','거부','요청 차단',%s,%s,%s,'api',%s)",
