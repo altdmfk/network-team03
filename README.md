@@ -65,3 +65,24 @@ $env:MIDDLEWARE_INGEST_URL = "http://127.0.0.1:8000/v1/ingest"
 
 시나리오 3의 Graylog 탐지 규칙과 n8n 설정 템플릿은
 [`scenario3-api-key-compromised/`](./scenario3-api-key-compromised/)에 있습니다.
+
+## EngineSquare 공통 웹앱
+
+`web-app/`은 메인 화면, 회원가입·로그인, 게시판, 보안 관제 대시보드와 관리자 페이지를 제공합니다.
+
+- 대시보드: 인시던트 티켓·최근 이벤트 조회, 상태·허용/거부 필터, 5건 단위 페이지 이동, 티켓 종료
+- 관리자: API 키 발급·폐기·교체 키 확인, 차단 IP 조회·차단 해제, 회원 등급 관리
+- 데이터 저장: Docker MySQL을 API 서버와 공유하며 키·차단 상태 변경은 서버 재시작 없이 다음 요청부터 반영
+- 화면 구성: 화면 너비에 맞춰 표와 긴 문구를 조정하는 반응형 레이아웃
+
+MySQL 컨테이너 `mysql-server`를 먼저 실행하고, 프로젝트 루트에서 웹앱을 시작합니다.
+API 서버는 별도 창에서 실행합니다.
+
+```powershell
+python -m pip install -r requirements.txt -r web-app/requirements.txt
+python web-app/app.py
+```
+
+웹앱 접속 주소는 `http://127.0.0.1:5001/`입니다.
+DB 설정, 권한과 실행 방법은 [web-app README](./web-app/README.md),
+시나리오 3의 Graylog·n8n·Wazuh 구성은 [시나리오 3 README](./scenario3-api-key-compromised/README.md)를 참고합니다.
