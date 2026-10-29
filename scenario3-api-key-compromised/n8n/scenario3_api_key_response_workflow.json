@@ -60,6 +60,31 @@
     },
     {
       "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "scenario3-alert-text",
+              "name": "text",
+              "value": "={{ (() => {\n  const response = $json;\n  const incident = response.incident ?? {};\n  const detection = $('Normalize Detection Event').item.json;\n  const reason = incident.detection_reason ?? incident.reason ?? detection.detection_reason ?? 'unknown';\n  const reasons = { not_allowed_ip: '비허용 IP에서 API 키 사용', suspicious_user_agent: '의심스러운 User-Agent에서 API 키 사용' };\n  const incidentId = incident.incident_id ?? response.incident_id;\n  const incidentState = incidentId ? (incident.status === 'created' ? '생성 완료' : '생성 확인') : '미생성';\n  const revoked = response.key_revoked === true;\n  const replaced = Boolean(response.new_api_key_id);\n  const blocked = response.ip_blocked === true || incident.ip_blocked === true;\n  return '🚨 [시나리오 3 API 키 유출 의심]\\n'\n    + '키 식별자: ' + String(incident.api_key_id ?? detection.api_key_id ?? '확인 불가')\n    + ' | 공격 IP: ' + String(incident.client_ip ?? detection.client_ip ?? '확인 불가')\n    + '\\n탐지 사유: ' + String(reasons[reason] ?? reason)\n    + '\\n📋 인시던트: ' + String(incidentId ?? '없음') + ' | 생성 상태: ' + incidentState\n    + '\\n대응 결과: 기존 키 폐기 ' + (revoked ? '완료' : '미확인')\n    + ' · 교체 키 발급 ' + (replaced ? '확인' : '미확인')\n    + ' · IP 차단 ' + (blocked ? '완료' : '미확인');\n})() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "scenario3-format-alert",
+      "name": "Format Scenario 3 Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1000,
+        300
+      ],
+      "notes": "Discord 알림 본문은 $json.text를 사용합니다. 실제 Discord 전송 노드와 Webhook 인증정보는 대상 환경에서 별도로 설정합니다."
+    },
+    {
+      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ status: 'completed', event_type: $('Normalize Detection Event').item.json.event_type, api_key_id: $('Normalize Detection Event').item.json.api_key_id, client_ip: $('Normalize Detection Event').item.json.client_ip, response: $json }) }}",
         "options": {}
@@ -69,7 +94,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1020,
+        1240,
         300
       ]
     }
@@ -98,6 +123,17 @@
       ]
     },
     "Revoke Key and Block IP": {
+      "main": [
+        [
+          {
+            "node": "Format Scenario 3 Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Scenario 3 Alert": {
       "main": [
         [
           {
