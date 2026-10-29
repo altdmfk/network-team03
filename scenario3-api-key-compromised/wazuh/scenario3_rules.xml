@@ -1,0 +1,25 @@
+<group name="enginesquare,scenario3,">
+  <rule id="100310" level="10">
+    <!-- Wazuh 4.9 classifies JSON containing event_type under rule 86600. -->
+    <if_sid>86600</if_sid>
+    <field name="event_type">^api_key_compromised$</field>
+    <field name="detection_reason">^not_allowed_ip$</field>
+    <field name="status_code">^403$</field>
+    <description>EngineSquare Scenario 3: API key used from disallowed IP $(client_ip), key ID $(api_key_id)</description>
+    <group>api_key_compromised,authentication_failed,</group>
+  </rule>
+  <rule id="100311" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">^api_request_allowed$</field>
+    <field name="status_code">^200$</field>
+    <description>EngineSquare Scenario 3: Normal API request allowed from $(client_ip)</description>
+    <group>api_request_allowed,authentication_success,</group>
+  </rule>
+  <rule id="100312" level="3">
+    <if_sid>86600</if_sid>
+    <field name="event_type">^api_response_completed$</field>
+    <field name="status_code">^200$</field>
+    <description>EngineSquare Scenario 3: Automatic response completed for $(incident_id)</description>
+    <group>api_response_completed,</group>
+  </rule>
+</group>
