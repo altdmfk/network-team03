@@ -8,6 +8,7 @@ import config
 
 led_red = Pin(config.LED_RED_PIN, Pin.OUT)
 led_green = Pin(config.LED_GREEN_PIN, Pin.OUT)
+buzzer = Pin(config.BUZZER_PIN, Pin.OUT)
 
 # status: "normal"(초록) / "warning"(적+녹=노랑, 1~2단계 탐지) / "locked"(적색, 킬체인 확정)
 state = {"status": "normal"}
@@ -32,10 +33,13 @@ def apply_status(status):
     state["status"] = status
     if status == "normal":
         show_normal()
+        buzzer.value(0)
     elif status == "warning":
         show_warning()
+        buzzer.value(0)
     elif status == "locked":
         show_locked()
+        buzzer.value(1)
 
 
 def blink_once():
@@ -46,12 +50,14 @@ def blink_once():
 
 
 def apply_lockdown():
-    # 깜빡임 3회 후 고정 적색 - Lockdown 적용을 시각적으로 구분
+    # 깜빡임 3회 + 부저 3번 울림 후 고정 적색 + 경보음 - Lockdown 적용을 시각/청각으로 구분
     for _ in range(3):
         led_red.value(0)
         led_green.value(0)
+        buzzer.value(0)
         time.sleep(0.15)
         led_red.value(1)
+        buzzer.value(1)
         time.sleep(0.15)
     apply_status("locked")
 

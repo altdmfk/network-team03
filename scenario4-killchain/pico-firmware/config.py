@@ -11,3 +11,7 @@ AUTH_TOKEN = "CHANGE_ME_SHARED_SECRET"
 # 정상: 초록만 켬 / 경고(1~2단계 탐지): 적+녹 동시(= 노랑으로 보임) / Lockdown: 적색만
 LED_RED_PIN = 2
 LED_GREEN_PIN = 3
+
+# 액티브 부저(SMG-A, 3.3~5V) 연결한 GPIO 번호
+# Lockdown(CRITICAL) 상태일 때만 경보음을 울림. 해제되면 자동으로 꺼짐
+BUZZER_PIN = 4
