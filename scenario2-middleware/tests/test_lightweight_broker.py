@@ -424,6 +424,9 @@ class TestBoundedQueueAndBackpressure:
         assert len(msgs) == 5
         consumer.commit()
 
+        # Refresh producer's cached lag after consumer offset commit
+        producer.refresh_unconsumed_lag("security-logs")
+
         # Now produce should succeed immediately
         producer.produce("security-logs", value=b'{"i": 6}')
         producer.flush()
