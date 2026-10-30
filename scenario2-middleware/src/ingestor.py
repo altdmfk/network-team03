@@ -45,8 +45,10 @@ from config import (
     DLQ_BACKEND,
     INGESTOR_HOST,
     INGESTOR_PORT,
+    LAG_REFRESH_INTERVAL_SEC,
     MAX_BROKER_BUFFER_MESSAGES,
     MAX_LOGS_PER_SEC,
+    MAX_UNCONSUMED_LAG,
     METRICS_DB_PATH,
     OTEL_ENABLED,
     PRIORITY_EVENT_TYPES,
@@ -441,10 +443,14 @@ class WalLogBufferingMiddleware:
             "broker.db.path": BROKER_DB_PATH,
             "num_partitions": BROKER_PARTITIONS,
         }
+        if MAX_UNCONSUMED_LAG is not None:
+            producer_conf["max_unconsumed_lag"] = MAX_UNCONSUMED_LAG
+
         self.producer = Producer(
             producer_conf,
             db_path=BROKER_DB_PATH,
             max_queue_size=MAX_BROKER_BUFFER_MESSAGES,
+            max_unconsumed_lag=MAX_UNCONSUMED_LAG,
             num_partitions=BROKER_PARTITIONS,
         )
 
@@ -1226,12 +1232,96 @@ def _active_middleware() -> WalLogBufferingMiddleware:
     return wal_middleware
 
 
+# ---------------------------------------------------------------------------
+# Background Periodic Lag Cache Refresh Task (Non-blocking Backpressure)
+# ---------------------------------------------------------------------------
+_lag_refresh_task: Optional[asyncio.Task] = None
+
+
+async def _broker_lag_refresh_loop(
+    mw: Optional[WalLogBufferingMiddleware] = None,
+    interval: Optional[float] = None,
+) -> None:
+    """
+    Background asyncio task that periodically queries unconsumed broker lag
+    via asyncio.to_thread and updates the producer's in-memory lag cache.
+    Runs every LAG_REFRESH_INTERVAL_SEC (default 1.0s, configurable).
+    Catches all exceptions so that transient database locks or errors do not terminate the loop.
+    """
+    refresh_sec = (
+        interval
+        if interval is not None
+        else getattr(SETTINGS, "lag_refresh_interval_sec", LAG_REFRESH_INTERVAL_SEC)
+    )
+    logger.info(
+        "Broker lag background refresh task started (interval=%.2fs).",
+        refresh_sec,
+    )
+    while True:
+        try:
+            active_mw = mw or _active_middleware()
+            producer = getattr(active_mw, "producer", None)
+            if producer is not None and hasattr(producer, "_storage"):
+                storage = producer._storage
+                for t in (BROKER_TOPIC, BROKER_PRIORITY_TOPIC, None):
+                    # Query unconsumed lag using asyncio.to_thread to prevent blocking main event loop
+                    lag = await asyncio.to_thread(
+                        storage.get_total_unconsumed_lag, None, t
+                    )
+                    if hasattr(producer, "update_cached_lag"):
+                        producer.update_cached_lag(lag, topic=t)
+        except asyncio.CancelledError:
+            logger.info("Broker lag background refresh task cancelled.")
+            break
+        except Exception as exc:
+            logger.warning(
+                "Error refreshing broker lag cache: %s. Retrying in %.2fs...",
+                exc,
+                refresh_sec,
+            )
+
+        try:
+            await asyncio.sleep(refresh_sec)
+        except asyncio.CancelledError:
+            logger.info("Broker lag background refresh task cancelled during sleep.")
+            break
+
+
+def start_lag_refresh_task(
+    mw: Optional[WalLogBufferingMiddleware] = None,
+    interval: Optional[float] = None,
+) -> asyncio.Task:
+    """Starts the background asyncio lag refresh task if not already running."""
+    global _lag_refresh_task
+    if _lag_refresh_task is None or _lag_refresh_task.done():
+        _lag_refresh_task = asyncio.create_task(
+            _broker_lag_refresh_loop(mw=mw, interval=interval)
+        )
+    return _lag_refresh_task
+
+
+async def stop_lag_refresh_task() -> None:
+    """Cancels and waits for the background lag refresh task to terminate."""
+    global _lag_refresh_task
+    if _lag_refresh_task is not None:
+        _lag_refresh_task.cancel()
+        try:
+            await _lag_refresh_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        _lag_refresh_task = None
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     mw = _active_middleware()
     mw.start()
-    yield
-    mw.stop()
+    start_lag_refresh_task(mw)
+    try:
+        yield
+    finally:
+        await stop_lag_refresh_task()
+        mw.stop()
 
 
 app = FastAPI(
