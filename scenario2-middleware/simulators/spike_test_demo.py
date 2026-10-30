@@ -450,6 +450,7 @@ async def run_spike_verification(
         # 3. Verify Kill-Chain, Honeytoken & Idempotent Deduplication on Mock Graylog if active
         graylog_stored = total_forwarded
         duplicates_ignored = 0
+        g_status: Dict[str, Any] = {}
         if mock_available:
             status_resp = await client.get(f"{MOCK_GRAYLOG_BASE_URL}/status")
             if status_resp.status_code == 200:
@@ -537,18 +538,28 @@ async def run_spike_verification(
         std_p99 = std_lat.get("p99_sec", 0.0)
         std_max = std_lat.get("max_sec", 0.0)
 
-        print(
-            f"  • Standard Lane E2E Latency (Throttled) : avg={std_avg:.2f}s | p95={std_p95:.2f}s | p99={std_p99:.2f}s | max={std_max:.2f}s"
-        )
-        ht_lat = (
-            honeytoken_delivered_latency
-            if honeytoken_delivered_latency is not None
-            else prio_lat.get("avg_sec", 0.0)
-        )
-        lat_ok = ht_lat <= honeytoken_latency_budget
-        print(
-            f"  • Priority Lane (Honeytoken) Latency    : {ht_lat:.3f}s (Budget: < {honeytoken_latency_budget:.1f}s) [{'PASS' if lat_ok else 'FAIL'}]"
-        )
+        if std_lat:
+            print(
+                f"  • Standard Lane E2E Latency (Throttled) : avg={std_avg:.2f}s | p95={std_p95:.2f}s | p99={std_p99:.2f}s | max={std_max:.2f}s"
+            )
+        else:
+            print(
+                "  • Standard Lane E2E Latency (Throttled) : N/A (real Graylog mode - latency telemetry is only available from Mock Graylog)"
+            )
+        if honeytoken_delivered_latency is not None or prio_lat:
+            ht_lat = (
+                honeytoken_delivered_latency
+                if honeytoken_delivered_latency is not None
+                else prio_lat.get("avg_sec", 0.0)
+            )
+            lat_ok = ht_lat <= honeytoken_latency_budget
+            print(
+                f"  • Priority Lane (Honeytoken) Latency    : {ht_lat:.3f}s (Budget: < {honeytoken_latency_budget:.1f}s) [{'PASS' if lat_ok else 'FAIL'}]"
+            )
+        else:
+            print(
+                "  • Priority Lane (Honeytoken) Latency    : N/A (real Graylog mode - verify in Graylog search: _event_type:HONEYTOKEN_ACCESS)"
+            )
         print(
             f"  • Engineering Trade-off Summary         : SIEM 보호를 위해 일반 로그 지연시간(p99)을 의도적으로 평탄화({max_logs_per_sec:.0f} EPS)하되, 70:30 우선순위 레인으로 긴급 침해 경보 골든타임(< {honeytoken_latency_budget:.1f}s)을 사수함."
         )
