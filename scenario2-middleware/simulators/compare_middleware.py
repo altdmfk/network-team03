@@ -9,12 +9,26 @@ Demonstrates:
 
 import argparse
 import asyncio
+import os
+import sys
 import time
 from typing import Any, Dict, List
 import httpx
 
-GRAYLOG_GELF_URL = "http://localhost:12201/gelf"
-MIDDLEWARE_URL = "http://localhost:8000"
+_sim_dir = os.path.dirname(os.path.abspath(__file__))
+_mid_root = os.path.dirname(_sim_dir)
+for _p in [os.path.join(_mid_root, "src"), _sim_dir, _mid_root]:
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:
+    from config import INGEST_API_KEYS
+    DEFAULT_API_KEY = INGEST_API_KEYS[0] if INGEST_API_KEYS else "prod-ingest-key-1"
+except Exception:
+    DEFAULT_API_KEY = "prod-ingest-key-1"
+
+GRAYLOG_GELF_URL = os.environ.get("GRAYLOG_GELF_URL", "http://localhost:12201/gelf")
+MIDDLEWARE_URL = os.environ.get("MIDDLEWARE_URL", "http://localhost:8000")
 
 
 async def benchmark_direct_graylog(n: int = 500, concurrency: int = 300, timeout_sec: float = 0.25) -> Dict[str, Any]:
@@ -62,7 +76,7 @@ async def benchmark_direct_graylog(n: int = 500, concurrency: int = 300, timeout
     return {"elapsed": elapsed, "success": success, "dropped": dropped, "loss_rate": loss_rate}
 
 
-async def benchmark_with_middleware(n: int = 500) -> Dict[str, Any]:
+async def benchmark_with_middleware(n: int = 500, api_key: str = DEFAULT_API_KEY) -> Dict[str, Any]:
     print("\n" + "=" * 80)
     print(f" [TEST B] 미들웨어 있을 때 (WITH Middleware): 버퍼링 수집기(:8000)로 전송")
     print(f"         - 총 전송 로그 수: {n:,}건 (배치/비동기 수용)")
@@ -80,7 +94,9 @@ async def benchmark_with_middleware(n: int = 500) -> Dict[str, Any]:
         for i in range(n)
     ]
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    headers = {"X-API-Key": api_key} if api_key else {}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
         # Pre-check baseline
         try:
             base_m = (await client.get(f"{MIDDLEWARE_URL}/v1/metrics")).json()
@@ -95,15 +111,26 @@ async def benchmark_with_middleware(n: int = 500) -> Dict[str, Any]:
         chunk_size = 100
         for i in range(0, n, chunk_size):
             chunk = payloads[i:i + chunk_size]
-            resp = await client.post(f"{MIDDLEWARE_URL}/v1/ingest/batch", json={"logs": chunk})
-            resp.raise_for_status()
+            while True:
+                resp = await client.post(
+                    f"{MIDDLEWARE_URL}/v1/ingest/batch",
+                    json={"logs": chunk},
+                    headers=headers,
+                )
+                if resp.status_code == 429:
+                    retry_sec = float(resp.headers.get("Retry-After", "1.0"))
+                    await asyncio.sleep(retry_sec)
+                    continue
+                resp.raise_for_status()
+                break
         elapsed_ingest = time.perf_counter() - t0
 
         print(f"[*] 수집 완료 시간 (클라이언트 블로킹 해제): {elapsed_ingest:.3f}초 ({n / max(elapsed_ingest, 0.001):,.0f} logs/sec)")
         print(f"[*] 미들웨어 비동기 평탄화(500 EPS) 드레인 감시 중...")
 
+        drain_timeout = max(30.0, (n / 400.0) + 15.0)
         t_mon = time.monotonic()
-        while time.monotonic() - t_mon < 15.0:
+        while time.monotonic() - t_mon < drain_timeout:
             m = (await client.get(f"{MIDDLEWARE_URL}/v1/metrics")).json()
             fwd = m.get("total_forwarded_to_graylog", 0) - base_fwd
             lag = m.get("current_queue_lag", 0)
@@ -121,7 +148,7 @@ async def benchmark_with_middleware(n: int = 500) -> Dict[str, Any]:
     return {"elapsed_ingest": elapsed_ingest, "dropped": 0, "loss_rate": 0.0}
 
 
-async def run_comparison(count: int = 1000, concurrency: int = 300, timeout_sec: float = 0.25):
+async def run_comparison(count: int = 1000, concurrency: int = 300, timeout_sec: float = 0.25, api_key: str = DEFAULT_API_KEY):
     print("\n" + "#" * 80)
     print(f"  [SOAR Middleware A/B 비교 시연] 미들웨어 없을 때 vs 있을 때 ({count:,}건 부하)")
     print("#" * 80)
@@ -130,7 +157,7 @@ async def run_comparison(count: int = 1000, concurrency: int = 300, timeout_sec:
     res_a = await benchmark_direct_graylog(n=count, concurrency=concurrency, timeout_sec=timeout_sec)
 
     # 2. Run with middleware
-    res_b = await benchmark_with_middleware(n=count)
+    res_b = await benchmark_with_middleware(n=count, api_key=api_key)
 
     # 3. Final summary comparison table
     print("\n" + "=" * 80)
@@ -153,9 +180,10 @@ def main():
     parser.add_argument("--count", "--logs", "-c", type=int, default=1000, help="Log count to compare (default: 1000)")
     parser.add_argument("--concurrency", type=int, default=300, help="Concurrency for direct test (default: 300)")
     parser.add_argument("--timeout", type=float, default=0.25, help="Client timeout in seconds for direct logging (default: 0.25s)")
+    parser.add_argument("--api-key", type=str, default=os.environ.get("INGEST_API_KEY", DEFAULT_API_KEY), help=f"Ingest API key for middleware authentication (default: {DEFAULT_API_KEY})")
     args = parser.parse_args()
 
-    asyncio.run(run_comparison(count=args.count, concurrency=args.concurrency, timeout_sec=args.timeout))
+    asyncio.run(run_comparison(count=args.count, concurrency=args.concurrency, timeout_sec=args.timeout, api_key=args.api_key))
 
 
 if __name__ == "__main__":
