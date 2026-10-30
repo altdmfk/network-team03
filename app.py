@@ -32,7 +32,7 @@ REQUEST_COUNTS = defaultdict(int)
 SECURITY_EVENTS = []
 INCIDENTS = []
 
-REQUEST_LIMIT = 5
+REQUEST_LIMIT = int(os.getenv("REQUEST_LIMIT", "10000"))
 SUSPICIOUS_USER_AGENT_WORDS = ("kali", "sqlmap", "nikto", "masscan")
 LOG_FILE = Path(
     os.getenv("SECURITY_LOG_FILE", Path(__file__).with_name("security_events.jsonl"))
@@ -48,6 +48,11 @@ EVENT_SEVERITY = {
     "authentication_failed": 4,
     "api_request_rate_limited": 4,
     "api_key_compromised": 1,
+    "HONEYTOKEN_ACCESS": 1,
+    "honeytoken_used": 1,
+    "PORT_SCAN": 4,
+    "BRUTE_FORCE": 2,
+    "IOT_CONTROL": 1,
     "api_response_completed": 6,
 }
 
@@ -372,6 +377,35 @@ def automation_revoke_key():
     except ValueError:
         return jsonify(error="invalid_input", message="Invalid client IP"), 400
     return jsonify(response), 200
+
+
+
+@app.route("/api/honeytoken", methods=["GET", "POST"])
+def honeytoken_endpoint():
+    current_ip = client_ip()
+    token_id = request.headers.get("X-Honeytoken-ID", "HT-001")
+    event = write_security_log(
+        "HONEYTOKEN_ACCESS",
+        403,
+        api_key_id="honeytoken_trap",
+        token_id=token_id,
+        detection_reason="honeytoken_access_detected",
+    )
+    return jsonify(error="forbidden", message="Honeytoken trap triggered! Intrusion alert recorded.", token_id=token_id), 403
+
+
+@app.post("/api/admin/unblock")
+def admin_unblock_ip():
+    body = request.get_json(silent=True) or {}
+    ip = body.get("ip")
+    if not ip:
+        return jsonify(error="invalid_input", message="ip required"), 400
+    security_store.unblock(ip)
+    REQUEST_COUNTS.clear()
+    if body.get("reactivate_key"):
+        with security_store.connect() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE api_keys SET status='active', revoked_at=NULL, revoked_reason=NULL WHERE api_key_id=%s", (body["reactivate_key"],))
+    return jsonify(unblocked=ip, status="ok"), 200
 
 
 if __name__ == "__main__":
