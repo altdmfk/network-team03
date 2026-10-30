@@ -6,17 +6,35 @@
 
 ## ⚡ 빠른 시작: 실제 Graylog 연동 및 실행
 
-### 1. Graylog 인풋 설정
+### 1. Graylog 인풋 및 탐지 규칙(Rule) 설정
+
+#### 1.1 GELF HTTP 인풋 생성
 1. Graylog 웹 콘솔(`http://localhost:9000`)에 접속합니다.
 2. 상단 메뉴 **System** > **Inputs** 로 이동합니다.
-3. 드롭다운에서 **GELF HTTP**를 선택하고 **Launch new input**을 클릭합니다.
+3. 드롭다운에서 **GELF HTTP**를 선택하고 **Launch new input**을 클릭합니다:
    - **Global**: 체크 (전역 인풋 설정)
    - **Title**: `Middleware GELF Ingest`
    - **Port**: `12201`
    - **Bind address**: `0.0.0.0`
 4. **Save**를 누르고 인풋 상태가 **RUNNING**인지 확인합니다.
 
----
+#### 1.2 SIEM 공격 탐지 규칙 (Event Definitions) 등록
+미들웨어가 500 EPS로 안정 배송한 로그 속에서 Graylog가 실시간 공격을 탐지하도록 룰을 생성합니다:
+1. **무차별 대입 공격 (Brute Force Detection)**:
+   - **Alerts** > **Event Definitions** > **Create Event Definition**
+   - **Title**: `[S2] Brute Force Attack Detection` (Priority: `High`)
+   - **Condition Type**: **Aggregation**
+   - **Search Query**: `status_code:401 OR (event_type:APP_REQUEST AND status_code:401)`
+   - **Time Range**: `1 minute`, **Execute every**: `30 seconds`
+   - **Group by Field**: `client_ip`
+   - **Threshold**: When `count() >= 5` (1분 내 동일 IP에서 5회 이상 실패 시 경보)
+   - **Grace Period**: `1 minute` (동일 IP에 대한 1분 내 중복 알람 억제)
+   - **Notifications**: `S2 n8n Webhook (Brute Force)` 연결
+2. **허니토큰 긴급 침입 탐지 (Honeytoken Alert)**:
+   - **Title**: `[S2] Honeytoken Infiltration Alert` (Priority: `Critical`)
+   - **Condition Type**: **Filter**
+   - **Search Query**: `_honeytoken_alert:true OR event_type:HONEYTOKEN_ACCESS`
+   - **Threshold**: 1회 발생 즉시 탐지 (`count() > 0`)
 
 ### 2. 도커 컴포즈 실행
 기본 설정은 호스트의 Graylog(`http://host.docker.internal:12201/gelf`)로 로그를 전달하도록 구성되어 있습니다.
@@ -204,7 +222,7 @@ flowchart LR
 
 ## 7. 메트릭 원장 분리와 5단계 무손실 감사 리포트
 
-시스템은 영구 유실과 일시 격리를 명확히 구분하여 아래의 무손실 회계 원장 공식을 검증합니다.
+시스템은 유실(Dropped)과 일시 격리(DLQ)를 명확히 구분하여 아래의 무손실 회계 원장 공식을 검증합니다.
 
 $$\text{Total Sent} = \text{Total Received} = \text{Total Forwarded} + \text{permanently\_dropped} + \text{dlq\_quarantined} = \text{Graylog Stored}$$
 

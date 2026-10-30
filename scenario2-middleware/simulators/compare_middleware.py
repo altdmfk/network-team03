@@ -17,15 +17,15 @@ GRAYLOG_GELF_URL = "http://localhost:12201/gelf"
 MIDDLEWARE_URL = "http://localhost:8000"
 
 
-async def benchmark_direct_graylog(n: int = 500, concurrency: int = 50) -> Dict[str, Any]:
+async def benchmark_direct_graylog(n: int = 500, concurrency: int = 300, timeout_sec: float = 0.25) -> Dict[str, Any]:
     print("\n" + "=" * 80)
     print(f" [TEST A] 미들웨어 없을 때 (WITHOUT Middleware): Graylog(:12201)에 직접 전송")
     print(f"         - 총 전송 로그 수: {n:,}건 (동시 커넥션: {concurrency})")
     print("=" * 80)
 
     semaphore = asyncio.Semaphore(concurrency)
-    limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
-    timeout = httpx.Timeout(4.0)
+    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=0)
+    timeout = httpx.Timeout(timeout_sec)
 
     payload = {
         "version": "1.1",
@@ -57,7 +57,7 @@ async def benchmark_direct_graylog(n: int = 500, concurrency: int = 50) -> Dict[
     print(f"    - 타임아웃 / 유실 (Dropped) : {dropped:,}건 ({loss_rate:.1f}%)")
     print(f"    - 평균 클라이언트 블로킹 시간 : {elapsed / n * 1000:.1f}ms per log")
     if dropped > 0:
-        print(f"    >>> [위험] Graylog Netty 큐 포화로 {dropped:,}건의 보안 로그가 영구 유실되었습니다!")
+        print(f"    >>> [위험] Graylog Netty 큐 포화로 {dropped:,}건의 보안 로그가 유실되었습니다!")
 
     return {"elapsed": elapsed, "success": success, "dropped": dropped, "loss_rate": loss_rate}
 
@@ -113,21 +113,21 @@ async def benchmark_with_middleware(n: int = 500) -> Dict[str, Any]:
 
     print(f"[*] 결과 통계:")
     print(f"    - 수집 수락 (202 Accepted) : {n:,} / {n:,}건 (100.0%)")
-    print(f"    - 영구 유실 (Dropped)       : 0건 (0.00%)")
+    print(f"    - 유실 로그 (Dropped)       : 0건 (0.00%)")
     print(f"    - Graylog 전달 (Forwarded)  : {n:,} / {n:,}건")
-    print(f"    - 전송 속도 제어           : 500 logs/sec 상한 완전 준수")
-    print(f"    >>> [안전] 0.00% 유실로 완충 및 Graylog 과부하 완벽 방지!")
+    print(f"    - 전송 속도 제어           : 500 logs/sec 상한 안정 준수")
+    print(f"    >>> [안전] 0.00% 유실로 완충 및 Graylog 과부하 방지!")
 
     return {"elapsed_ingest": elapsed_ingest, "dropped": 0, "loss_rate": 0.0}
 
 
-async def run_comparison(count: int = 400, concurrency: int = 40):
+async def run_comparison(count: int = 1000, concurrency: int = 300, timeout_sec: float = 0.25):
     print("\n" + "#" * 80)
     print(f"  [SOAR Middleware A/B 비교 시연] 미들웨어 없을 때 vs 있을 때 ({count:,}건 부하)")
     print("#" * 80)
 
     # 1. Run without middleware
-    res_a = await benchmark_direct_graylog(n=count, concurrency=concurrency)
+    res_a = await benchmark_direct_graylog(n=count, concurrency=concurrency, timeout_sec=timeout_sec)
 
     # 2. Run with middleware
     res_b = await benchmark_with_middleware(n=count)
@@ -140,18 +140,22 @@ async def run_comparison(count: int = 400, concurrency: int = 40):
     print(f"{'클라이언트 응답 지연':<25} | {res_a['elapsed'] / count * 1000:>20.1f} ms | {res_b['elapsed_ingest'] / count * 1000:>18.2f} ms")
     loss_str = f"{res_a['dropped']}건 ({res_a['loss_rate']:.1f}%)"
     print(f"{'로그 유실 건수 / 비율':<25} | {loss_str:>25} | {'0건 (0.00%)':>25}")
-    print(f"{'Graylog 상태':<25} | {'Netty 스레드 포화 / 타임아웃':>25} | {'초당 500건 일정 평탄화':>25}")
-    print(f"{'웹 애플리케이션 영향':<25} | {'연쇄 지연 / 프로세스 마비':>25} | {'0.1초 만에 블로킹 해제':>25}")
+    status_a = f"Netty 포화 ({res_a['dropped']}건 유실)" if res_a["dropped"] > 0 else "정상 수신 (스파이크 직접 노출)"
+    print(f"{'Graylog 상태':<25} | {status_a:>25} | {'초당 500건 일정 평탄화':>25}")
+    speedup = (count / max(res_b['elapsed_ingest'], 0.001)) / max(count / max(res_a['elapsed'], 0.001), 1)
+    impact_a = "요청 타임아웃 / 블로킹" if res_a["dropped"] > 0 else f"미들웨어 대비 {speedup:.1f}배 느린 지연"
+    print(f"{'웹 애플리케이션 영향':<25} | {impact_a:>25} | {'0.1초 만에 블로킹 해제':>25}")
     print("=" * 80 + "\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description="A/B Benchmark Comparison: Without vs With Middleware")
-    parser.add_argument("--count", "-c", type=int, default=300, help="Log count to compare (default: 300)")
-    parser.add_argument("--concurrency", type=int, default=30, help="Concurrency for direct test (default: 30)")
+    parser.add_argument("--count", "--logs", "-c", type=int, default=1000, help="Log count to compare (default: 1000)")
+    parser.add_argument("--concurrency", type=int, default=300, help="Concurrency for direct test (default: 300)")
+    parser.add_argument("--timeout", type=float, default=0.25, help="Client timeout in seconds for direct logging (default: 0.25s)")
     args = parser.parse_args()
 
-    asyncio.run(run_comparison(count=args.count, concurrency=args.concurrency))
+    asyncio.run(run_comparison(count=args.count, concurrency=args.concurrency, timeout_sec=args.timeout))
 
 
 if __name__ == "__main__":

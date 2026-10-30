@@ -181,6 +181,7 @@ class GraylogConsumerWorker:
             or GraylogDeliveryClient(
                 sleep_fn=lambda s: time.sleep(s),
                 jitter_fn=lambda a, b: random.uniform(a, b),
+                split_post=getattr(SETTINGS, "gelf_split_post", False),
             )
         )
         self.offset_committer: ExplicitOffsetCommitter = (
@@ -225,7 +226,7 @@ class GraylogConsumerWorker:
             if http_client is not None
             else httpx.Client(
                 timeout=httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0),
-                limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+                limits=httpx.Limits(max_keepalive_connections=30, max_connections=50),
                 headers={"Content-Type": "application/json"},
             )
         )

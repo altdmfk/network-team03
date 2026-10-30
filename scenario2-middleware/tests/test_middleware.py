@@ -21,6 +21,8 @@ import mock_graylog_server
 from consumer_worker import (
     DeliveryOutcome,
     GraylogConsumerWorker,
+    GraylogDeliveryClient,
+    RetryPolicy,
     TokenBucketRateLimiter,
     transform_to_gelf,
 )
@@ -761,6 +763,43 @@ class TestGraylogConsumerWorker:
                     worker._deliver_batch_with_backoff(gelf_batch)
                     is DeliveryOutcome.ABORTED
                 )
+
+    def test_deliver_batch_split_post_concurrent_delivery(
+        self, tmp_path: Path
+    ) -> None:
+        calls = []
+
+        def mock_post(url: str, **kwargs: Any) -> httpx.Response:
+            calls.append(kwargs)
+            return httpx.Response(status_code=202)
+
+        client = GraylogDeliveryClient(split_post=True)
+        gelf_batch = [
+            transform_to_gelf(sample_event_dict(), 0, 1),
+            transform_to_gelf(sample_event_dict(), 0, 2),
+            transform_to_gelf(sample_event_dict(), 0, 3),
+        ]
+        mock_http = MagicMock()
+        mock_http.post.side_effect = mock_post
+
+        outcome = client.deliver_batch(
+            gelf_batch=gelf_batch,
+            http_client=mock_http,
+            gelf_url="http://mock-graylog/gelf",
+            retry_policy=RetryPolicy(
+                max_retries=1,
+                base_backoff_seconds=0.01,
+                max_backoff_seconds=0.1,
+            ),
+            dry_run=False,
+            is_running_fn=lambda: True,
+            on_dead_letter=lambda *a, **k: True,
+        )
+        assert outcome is DeliveryOutcome.DELIVERED
+        assert len(calls) == 3
+        for c in calls:
+            assert "json" in c
+            assert c["json"]["short_message"] is not None
 
     def test_context_manager_deterministic_cleanup(self, tmp_path: Path) -> None:
         db_file = str(tmp_path / "cleanup.db")

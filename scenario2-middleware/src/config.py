@@ -77,6 +77,7 @@ class PipelineSettings(BaseModel):
     graylog_gelf_url: str = Field(default="http://localhost:12201/gelf", min_length=1)
     gelf_host: str = Field(default="security-middleware", min_length=1)
     dry_run_graylog_mock: bool = Field(default=False)
+    gelf_split_post: bool = Field(default=False)
 
     # Consumer Worker Batching, Rate-Limiting & Backoff Configuration
     batch_size: int = Field(default=100, ge=1, le=10000)
@@ -377,6 +378,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "dry_run_graylog_mock": _parse_bool(
             source.get("DRY_RUN_GRAYLOG_MOCK", "false")
         ),
+        "gelf_split_post": _parse_bool(
+            source.get("GELF_SPLIT_POST", "false")
+        ),
         "batch_size": batch_size,
         "max_logs_per_sec": max_logs_per_sec,
         "batch_linger_ms": int(source.get("BATCH_LINGER_MS", "100")),
@@ -462,6 +466,7 @@ MOCK_GRAYLOG_BASE_URL: str = SETTINGS.mock_graylog_base_url
 GRAYLOG_GELF_URL: str = SETTINGS.graylog_gelf_url
 GELF_HOST: str = SETTINGS.gelf_host
 DRY_RUN_GRAYLOG_MOCK: bool = SETTINGS.dry_run_graylog_mock
+GELF_SPLIT_POST: bool = SETTINGS.gelf_split_post
 
 BATCH_SIZE: int = SETTINGS.batch_size
 MAX_LOGS_PER_SEC: float = SETTINGS.max_logs_per_sec
