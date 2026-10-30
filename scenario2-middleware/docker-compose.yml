@@ -154,6 +154,8 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - ./docs/observability/grafana_dashboard.json:/var/lib/grafana/dashboards/soar_dashboard.json:ro
+      - ./docs/observability/grafana_datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./docs/observability/grafana_dashboard_provider.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro
     depends_on:
       - prometheus
     networks:
