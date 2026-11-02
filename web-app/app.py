@@ -775,5 +775,162 @@ def dashboard():
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 시나리오 1: 허니토큰 기만 탐지 — EngineSquare 통합
+#  - 미끼 계정은 이 웹앱 users 표에 일반 회원처럼 섞여 있다(seed-honeytoken 명령으로 심음).
+#  - 미끼로 로그인하면 일반 로그인 실패와 똑같은 화면을 돌려주고(위장), 미끼 사용을 기록한 뒤
+#    Graylog·Middleware에 신고한다. 티켓·이벤트·차단은 n8n이 공용 API(/automation/honeytoken-response)로 처리한다.
+#  - 차단 목록은 시나리오 3과 같은 blocked_ips 를 쓴다. 차단된 IP는 이 웹앱에도 접근할 수 없다(403, localhost 제외).
+#  - 미끼 현황·미끼 심기는 관리자 화면의 '시나리오 관리' 박스에 있다.
+# ══════════════════════════════════════════════════════════════════════════════
+import json as _s1_json
+import socket as _s1_socket
+import time as _s1_time
+import click as _s1_click
+from urllib.error import URLError as _S1URLError
+from urllib.request import Request as _S1Request, urlopen as _s1_urlopen
+
+S1_GRAYLOG_HOST = os.getenv("GRAYLOG_HOST", "localhost")
+S1_GRAYLOG_GELF_PORT = int(os.getenv("GRAYLOG_GELF_PORT", "12201"))
+S1_MIDDLEWARE_URL = os.getenv("MIDDLEWARE_INGEST_URL", "http://localhost:8000/ingest")
+S1_MIDDLEWARE_KEY = os.getenv("MIDDLEWARE_API_KEY", "")
+S1_LOGIN_FAILED_MSG = "아이디 또는 비밀번호가 올바르지 않습니다."   # login() 일반 실패 문구와 같아야 한다
+
+security_store.initialize_honeytokens()
+
+
+def _s1_report(token, ip):
+    gelf = {
+        "version": "1.1", "host": _s1_socket.gethostname(),
+        "short_message": f"honeytoken used: {token['token_id']} ('{token['token_value']}') from {ip}",
+        "timestamp": _s1_time.time(), "level": 2,
+        # 기존 Graylog 이벤트 정의(S1 Honeytoken used)·n8n이 쓰는 필드
+        "_rule": "honeytoken", "_token_id": token["token_id"], "_username": token["token_value"],
+        "_placement": token["placement"], "_src_ip": ip,
+        # 팀 공통 이벤트 필드
+        "_event_type": "HONEYTOKEN_ACCESS", "_client_ip": ip,
+        "_target_resource": request.path, "_status_code": 200,   # 일반 로그인 실패와 같은 로그인 화면(200)
+    }
+    try:
+        with _s1_socket.socket(_s1_socket.AF_INET, _s1_socket.SOCK_DGRAM) as sock:
+            sock.sendto(_s1_json.dumps(gelf).encode("utf-8"), (S1_GRAYLOG_HOST, S1_GRAYLOG_GELF_PORT))
+    except OSError:
+        pass
+    if not S1_MIDDLEWARE_URL:
+        return
+    event = {
+        "schema_version": "1.0", "timestamp": datetime.now(timezone.utc).isoformat(),
+        "client_ip": ip, "event_type": "HONEYTOKEN_ACCESS", "target_resource": request.path,
+        "status_code": 200, "severity": 1,
+        # 키 이름에 token 이 들어가면 Middleware가 [REDACTED] 처리하므로 decoy_* 로 보낸다
+        "raw_payload": {"decoy_id": token["token_id"], "decoy_type": token["token_type"],
+                        "decoy_placement": token["placement"],
+                        "detection_reason": "honeytoken_used", "source_scenario": "scenario1-honeytoken"},
+    }
+    headers = {"Content-Type": "application/json"}
+    if S1_MIDDLEWARE_KEY:
+        headers["X-API-Key"] = S1_MIDDLEWARE_KEY
+    try:
+        with _s1_urlopen(_S1Request(S1_MIDDLEWARE_URL, data=_s1_json.dumps(event, ensure_ascii=False).encode("utf-8"),
+                                    headers=headers, method="POST"), timeout=0.5):
+            pass
+    except (OSError, _S1URLError, TimeoutError):
+        pass
+
+
+@app.before_request
+def scenario1_block_guard():
+    """공용 차단 목록(blocked_ips)에 있는 IP는 웹앱에 접근할 수 없다."""
+    if request.endpoint == "static":
+        return None
+    ip = request.remote_addr or ""
+    if ip in {"", "127.0.0.1", "::1"}:
+        return None
+    try:
+        blocked = security_store.is_blocked(ip)
+    except pymysql.MySQLError:
+        return None
+    if blocked:
+        if request.accept_mimetypes.accept_html and not request.path.startswith("/api/"):
+            return "<h1>403 Forbidden</h1><p>차단된 IP입니다(관리자에게 문의).</p>", 403
+        return {"blocked": True, "ip": ip, "msg": "차단된 IP입니다(관리자에게 문의)."}, 403
+    return None
+
+
+@app.before_request
+def scenario1_decoy_session_guard():
+    """미끼 계정은 어떤 경로로도 로그인 상태가 될 수 없다."""
+    user = g.get("current_user")
+    if user and security_store.find_honeytoken_account(user["username"]):
+        session.clear()
+        g.current_user = None
+
+
+@app.before_request
+def scenario1_honeytoken_login():
+    """미끼 계정 로그인 → 기록·신고 후 일반 로그인 실패와 똑같은 화면."""
+    if request.endpoint != "login" or request.method != "POST":
+        return None
+    username = request.form.get("username", "").strip()
+    if not username:
+        return None
+    token = security_store.find_honeytoken_account(username)
+    if not token:
+        return None
+    ip = request.remote_addr or "unknown"
+    security_store.mark_honeytoken_used(token, ip)
+    _s1_report(token, ip)
+    flash(S1_LOGIN_FAILED_MSG, "error")
+    return render_template("login.html")
+
+
+def _s1_seed(token_id, username):
+    """미끼 계정 심기. 같은 이름의 실제 계정·미끼가 있으면 덮어쓰지 않고 (False, 이유)를 돌려준다."""
+    token_id, username = token_id.strip(), username.strip()
+    if not token_id or not username or len(token_id) > 20 or len(username) > 50:
+        return False, "미끼 번호(20자 이내)와 계정 이름(50자 이내)을 입력해 주세요."
+    db = get_db()
+    if db.execute("SELECT 1 FROM honeytokens WHERE token_id=? OR token_value=?", (token_id, username)).fetchone():
+        return False, f"{token_id} 또는 {username} 은(는) 이미 등록된 미끼입니다."
+    if db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+        return False, f"{username} 은(는) 이미 있는 계정입니다. 덮어쓰지 않았으니 다른 이름을 쓰세요."
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 비밀번호는 아무도 모르는 랜덤 값. 로그인 시도는 scenario1_honeytoken_login 에서 항상 실패 처리된다.
+    db.execute("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+               (username, generate_password_hash(secrets.token_hex(16)), now))
+    db.execute("INSERT INTO honeytokens (token_id, token_type, token_value, placement, status, created_at) "
+               "VALUES (?, 'account', ?, 'users_table', 'active', ?)", (token_id, username, now))
+    db.commit()
+    return True, f"{token_id}: 미끼 계정 {username} 을(를) 심었습니다."
+
+
+@app.cli.command("seed-honeytoken")
+@_s1_click.argument("token_id")
+@_s1_click.argument("username")
+def seed_honeytoken(token_id, username):
+    """미끼 계정 심기. 사용법(web-app 폴더): python -m flask --app app seed-honeytoken HT-001 backup_admin"""
+    _s1_click.echo(_s1_seed(token_id, username)[1])
+
+
+@app.post("/admin/honeytoken")
+@admin_required
+def admin_honeytoken_seed():
+    """관리자 화면 '시나리오 관리' 박스의 미끼 심기 폼(관리자 권한·CSRF 검사는 admin_required)."""
+    ok, message = _s1_seed(request.form.get("token_id", ""), request.form.get("username", ""))
+    flash(message, "success" if ok else "error")
+    return redirect(url_for("admin") + "#scenario-management", code=303)
+
+
+@app.context_processor
+def scenario1_admin_box():
+    """관리자 화면에서만 시나리오 1 현황을 넘긴다."""
+    if request.endpoint != "admin" or not g.get("current_user") or g.current_user["role"] != "admin":
+        return {}
+    tokens, tickets = security_store.honeytoken_overview()
+    return {"s1": {"tokens": tokens, "hits": len(tickets),
+                   "blocked": sum(1 for t in tickets if t["blocked_at"]),
+                   "last": tickets[0] if tickets else None}}
+
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5001, debug=True)
