@@ -735,6 +735,7 @@ def dashboard():
         event_params + (event_page.size, event_page.offset),
     ).fetchall()
     scenario_names = {
+        "honeytoken_used": "시나리오 1 · 허니토큰 사용 탐지",
         "api_request_allowed": "정상 API 요청",
         "api_key_compromised": "시나리오 3 · API 키 유출 탐지",
         "authentication_failed": "인증 실패 탐지",
