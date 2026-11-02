@@ -37,11 +37,14 @@
    - **Threshold**: `count() > 0` (1회 발생 시 즉시 탐지)
 
 ### 2. 도커 컴포즈 실행
-기본 설정은 호스트의 Graylog(`http://host.docker.internal:12201/gelf`)로 로그를 전달합니다.
+기본 설정은 호스트의 Graylog(`http://host.docker.internal:12201/gelf`)로 로그를 전달합니다. `.env`(`.env.example` 참고)의 `GRAYLOG_GELF_URL`에 콤마(`,`)로 구분하여 복수의 주소를 지정하면 첫 번째 주소는 기존 재시도 및 오프셋 커밋 정책으로 전송하고, 추가 주소로는 동일 배치를 비동기(fire-and-forget)로 복제 전송합니다.
 
 ```powershell
 # scenario2-middleware 디렉터리로 이동
 cd scenario2-middleware
+
+# (선택) 다중 Graylog 전송 등 환경변수 오버라이드가 필요한 경우
+Copy-Item .env.example .env
 
 # 미들웨어 및 관측성 스택(Prometheus, Grafana) 동시 실행
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile observability up -d --build
