@@ -362,6 +362,44 @@ def blocked_ips():
     return jsonify(count=len(addresses), blocked_ips=addresses)
 
 
+@app.post("/automation/killchain-response")
+def automation_killchain_response():
+    """Display scenario 4's CRITICAL result, without executing its responses."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error="invalid_input", message="A JSON object is required"), 400
+    if body.get("event_type") == "killchain_warning":
+        return jsonify(status="ignored", ticket_created=False, reason="WARNING does not create a ticket"), 200
+    try:
+        if body.get("event_type") != "killchain_critical":
+            raise ValueError("event_type must be killchain_critical")
+        value = body.get("client_ip")
+        if not isinstance(value, str):
+            raise ValueError("client_ip must be an IP address string")
+        event = dict(body, client_ip=str(ipaddress.ip_address(value.strip())))
+        for field, default, limit in (("action", "외부 대응 결과 수신", 255),
+                                       ("reason", "킬체인 3단계 CRITICAL 탐지", 255),
+                                       ("target_resource", "/device/control", 255)):
+            value = event.get(field, default)
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise ValueError(f"Invalid {field}")
+            event[field] = value.strip()
+        occurred = datetime.fromisoformat(str(event.get("timestamp", "")).replace("Z", "+00:00"))
+        # The team example is a Korean local time without an explicit offset.
+        if occurred.tzinfo is None:
+            from datetime import timedelta
+            occurred = occurred.replace(tzinfo=timezone(timedelta(hours=9)))
+        event["timestamp"] = occurred.isoformat()
+        supplied = event.get("incident_id")
+        if supplied is not None:
+            import re
+            if not isinstance(supplied, str) or not re.fullmatch(r"INC-KILLCHAIN-\d{3,}", supplied):
+                raise ValueError("Invalid incident_id")
+    except (ValueError, TypeError) as error:
+        return jsonify(error="invalid_input", message=str(error)), 400
+    return jsonify(security_store.record_killchain_result(event)), 200
+
+
 @app.post("/automation/honeytoken-response")
 def automation_honeytoken_response():
     """Receive the scenario 1 detection; persist its ticket and shared IP block."""

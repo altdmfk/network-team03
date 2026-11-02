@@ -243,6 +243,35 @@ class SecurityStore:
             cursor.execute("DELETE FROM blocked_ips WHERE ip = %s", (ip,))
             return cursor.rowcount == 1
 
+    def record_killchain_result(self, event):
+        """Store external detection/response reports, never mutate keys or blocks."""
+        with self.connect() as connection, connection.cursor() as cursor:
+            connection.begin()
+            try:
+                identifier = assign_incident(cursor, "killchain_critical", event["client_ip"], "",
+                                             supplied=event.get("incident_id"))
+                cursor.execute("SELECT id FROM security_events WHERE incident_id=%s AND event_type='killchain_critical' "
+                               "AND event_timestamp=%s LIMIT 1", (identifier, event["timestamp"]))
+                duplicate = cursor.fetchone() is not None
+                if not duplicate:
+                    cursor.execute("INSERT INTO incident_tickets "
+                                   "(id,title,ip,api_key_id,scenario,event,occurrence_count,action,status,severity,severity_class,created_at,closed_at) "
+                                   "VALUES (%s,'킬체인 상관분석 CRITICAL',%s,'','시나리오 4','killchain_critical',1,%s,'열림','높음','high',%s,'-') "
+                                   "ON DUPLICATE KEY UPDATE occurrence_count=occurrence_count+1,action=VALUES(action)",
+                                   (identifier, event["client_ip"], event["action"], event["timestamp"]))
+                    cursor.execute("INSERT INTO security_events "
+                                   "(event_type,incident_id,api_key_id,client_ip,severity,status,decision,action,reason,event_timestamp,created_at,origin) "
+                                   "VALUES ('killchain_critical',%s,'',%s,'높음','열림','탐지',%s,%s,%s,%s,'n8n')",
+                                   (identifier, event["client_ip"], event["action"], event["reason"],
+                                    event["timestamp"], timestamp()))
+                connection.commit()
+                return {"incident_id": identifier, "client_ip": event["client_ip"],
+                        "status": "duplicate" if duplicate else "created", "ticket_created": not duplicate,
+                        "shared_block_applied": False}
+            except Exception:
+                connection.rollback()
+                raise
+
     def respond_honeytoken(self, event):
         """Commit a honeytoken ticket, event and shared IP block atomically.
 
