@@ -9,6 +9,7 @@ Those services consume the JSON event sent to ``/v1/ingest`` when the
 from collections import defaultdict
 from datetime import datetime, timezone
 import json
+import ipaddress
 import os
 import sys
 from pathlib import Path
@@ -354,6 +355,36 @@ def security_events():
 def blocked_ips():
     addresses = sorted(row["ip"] for row in security_store.blocks())
     return jsonify(count=len(addresses), blocked_ips=addresses)
+
+
+@app.post("/automation/honeytoken-response")
+def automation_honeytoken_response():
+    """Receive the scenario 1 detection; persist its ticket and shared IP block."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error="invalid_input", message="A JSON object is required"), 400
+    event = dict(body)
+    try:
+        supplied_ip = event.get("client_ip")
+        if not isinstance(supplied_ip, str):
+            raise ValueError("client_ip must be an IP address string")
+        event["client_ip"] = str(ipaddress.ip_address(supplied_ip.strip()))
+    except (ValueError, TypeError) as error:
+        return jsonify(error="invalid_input", message=str(error)), 400
+    event["event_type"] = "honeytoken_used"
+    for field, fallback, limit in (("token_id", "미상", 100), ("username", "미상", 100),
+                                   ("placement", "미상", 100),
+                                   ("reason", "허니토큰 미끼 계정 사용", 255)):
+        value = event.get(field)
+        event[field] = value.strip()[:limit] if isinstance(value, str) and value.strip() else fallback
+    try:
+        occurred = datetime.fromisoformat(str(event.get("timestamp", "")).replace("Z", "+00:00"))
+        if occurred.tzinfo is None:
+            raise ValueError("Missing timezone")
+        event["timestamp"] = occurred.isoformat()
+    except ValueError:
+        event["timestamp"] = utc_timestamp()
+    return jsonify(security_store.respond_honeytoken(event)), 200
 
 
 @app.post("/automation/revoke-key")
