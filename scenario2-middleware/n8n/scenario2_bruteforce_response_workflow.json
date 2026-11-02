@@ -1,0 +1,159 @@
+{
+  "id": "96qIMK1G6UtkQvUU",
+  "name": "Scenario 2 - Middleware Brute Force Response",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scenario2-bruteforce",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "scenario2-webhook",
+      "name": "Scenario 2 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "scenario2-bruteforce"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst fields = input.fields ?? input.event?.fields ?? {};\nconst clientIp = input.client_ip ?? fields.client_ip ?? input.src_ip ?? '10.0.0.99';\nconst reason = input.reason ?? '1분 내 로그인 5회 이상 실패 (무차별 대입 공격 감지)';\nconst timestamp = input.timestamp ?? new Date().toISOString();\n\nreturn [{\n  json: {\n    event_type: 'BRUTE_FORCE',\n    client_ip: clientIp,\n    detection_reason: reason,\n    api_key_id: input.api_key_id ?? 'key-001',\n    timestamp: timestamp\n  }\n}];"
+      },
+      "id": "scenario2-normalize",
+      "name": "Normalize Brute Force Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/automation/revoke-key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ api_key_id: $json.api_key_id, client_ip: $json.client_ip, detection_reason: $json.detection_reason }) }}",
+        "options": {}
+      },
+      "id": "scenario2-block-ip",
+      "name": "Block Attacker IP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "scenario2-alert-text",
+              "name": "text",
+              "value": "={{ (() => {\n  const detection = $('Normalize Brute Force Event').item.json;\n  const response = $json;\n  const blocked = response.ip_blocked === true || response.status === 'ok' || Boolean(response.incident);\n  return '🚨 [시나리오 2 SOAR 자동 대응 완료]\\n'\n    + '미들웨어 트래픽 평탄화 중 무차별 대입 공격(Brute Force) 탐지!\\n'\n    + '공격자 IP: ' + String(detection.client_ip) + '\\n'\n    + '탐지 사유: ' + String(detection.detection_reason) + '\\n'\n    + '자동 조치: IP 차단 ' + (blocked ? '완료 (HTTP 403 차단)' : '진행 중') + '\\n'\n    + '시간: ' + String(detection.timestamp);\n})() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "scenario2-format-alert",
+      "name": "Format Alert Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'completed', event_type: 'BRUTE_FORCE', client_ip: $('Normalize Brute Force Event').item.json.client_ip, response: $json }) }}",
+        "options": {}
+      },
+      "id": "scenario2-response",
+      "name": "Respond to Graylog",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1240,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Scenario 2 Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Brute Force Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Brute Force Event": {
+      "main": [
+        [
+          {
+            "node": "Block Attacker IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Block Attacker IP": {
+      "main": [
+        [
+          {
+            "node": "Format Alert Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Alert Message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Graylog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "versionId": "scenario2-middleware-bruteforce-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    "scenario2",
+    "soar",
+    "brute-force"
+  ]
+}

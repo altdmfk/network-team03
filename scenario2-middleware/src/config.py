@@ -77,6 +77,7 @@ class PipelineSettings(BaseModel):
     graylog_gelf_url: str = Field(default="http://localhost:12201/gelf", min_length=1)
     gelf_host: str = Field(default="security-middleware", min_length=1)
     dry_run_graylog_mock: bool = Field(default=False)
+    gelf_split_post: bool = Field(default=False)
 
     # Consumer Worker Batching, Rate-Limiting & Backoff Configuration
     batch_size: int = Field(default=100, ge=1, le=10000)
@@ -124,6 +125,8 @@ class PipelineSettings(BaseModel):
     # Producer Buffer Fast-Fail Backpressure Configuration
     producer_buffer_retries: int = Field(default=2, ge=1)
     producer_buffer_retry_sleep: float = Field(default=0.001, ge=0.0)
+    max_unconsumed_lag: Optional[int] = Field(default=None)
+    lag_refresh_interval_sec: float = Field(default=1.0, gt=0.0)
 
     # Structured Logging Configuration
     log_format: str = Field(default="text")
@@ -335,6 +338,14 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "producer_buffer_retry_sleep": float(
             source.get("PRODUCER_BUFFER_RETRY_SLEEP", "0.001")
         ),
+        "max_unconsumed_lag": (
+            int(source["MAX_UNCONSUMED_LAG"])
+            if source.get("MAX_UNCONSUMED_LAG") is not None
+            else None
+        ),
+        "lag_refresh_interval_sec": float(
+            source.get("LAG_REFRESH_INTERVAL_SEC", "1.0")
+        ),
         "broker_db_path": source.get("BROKER_DB_PATH", "./state/broker_wal.db"),
         "max_broker_buffer_messages": int(
             source.get(
@@ -376,6 +387,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "gelf_host": source.get("GELF_HOST", "security-middleware"),
         "dry_run_graylog_mock": _parse_bool(
             source.get("DRY_RUN_GRAYLOG_MOCK", "false")
+        ),
+        "gelf_split_post": _parse_bool(
+            source.get("GELF_SPLIT_POST", "false")
         ),
         "batch_size": batch_size,
         "max_logs_per_sec": max_logs_per_sec,
@@ -445,6 +459,8 @@ INGEST_RATE_LIMIT_BURST: float = SETTINGS.ingest_rate_limit_burst
 REDACTION_PATTERNS: List[str] = list(SETTINGS.redaction_patterns)
 PRODUCER_BUFFER_RETRIES: int = SETTINGS.producer_buffer_retries
 PRODUCER_BUFFER_RETRY_SLEEP: float = SETTINGS.producer_buffer_retry_sleep
+MAX_UNCONSUMED_LAG: Optional[int] = SETTINGS.max_unconsumed_lag
+LAG_REFRESH_INTERVAL_SEC: float = SETTINGS.lag_refresh_interval_sec
 
 METRICS_DB_PATH: str = SETTINGS.metrics_db_path
 DEAD_LETTER_FILE: str = SETTINGS.dead_letter_file
@@ -462,6 +478,7 @@ MOCK_GRAYLOG_BASE_URL: str = SETTINGS.mock_graylog_base_url
 GRAYLOG_GELF_URL: str = SETTINGS.graylog_gelf_url
 GELF_HOST: str = SETTINGS.gelf_host
 DRY_RUN_GRAYLOG_MOCK: bool = SETTINGS.dry_run_graylog_mock
+GELF_SPLIT_POST: bool = SETTINGS.gelf_split_post
 
 BATCH_SIZE: int = SETTINGS.batch_size
 MAX_LOGS_PER_SEC: float = SETTINGS.max_logs_per_sec

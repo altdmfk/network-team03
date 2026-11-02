@@ -35,7 +35,7 @@ class SafeSecurityLogClient:
 
     def __init__(
         self,
-        endpoint_url: str = "http://localhost:8000/v1/ingest",
+        endpoint_url: str = "http://127.0.0.1:8000/v1/ingest",
         api_key: Optional[str] = None,
         max_queue_size: int = 1000,
         failure_threshold: int = 3,
@@ -231,7 +231,7 @@ def send_security_log(
     status: int,
     severity: int,
     payload: dict,
-    endpoint_url: str = "http://localhost:8000/v1/ingest",
+    endpoint_url: str = "http://127.0.0.1:8000/v1/ingest",
 ) -> None:
     """Convenience helper forwarding events asynchronously via SafeSecurityLogClient."""
     client = get_default_client()

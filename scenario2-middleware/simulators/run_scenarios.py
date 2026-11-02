@@ -17,7 +17,7 @@ import httpx
 API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:5000")
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://127.0.0.1:5001")
 MIDDLEWARE_URL = os.environ.get("MIDDLEWARE_URL", "http://127.0.0.1:8000")
-GRAYLOG_URL = os.environ.get("GRAYLOG_URL", "http://localhost:9000")
+GRAYLOG_URL = os.environ.get("GRAYLOG_URL", "http://127.0.0.1:9000")
 
 
 def print_banner(title: str):

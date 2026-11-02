@@ -84,6 +84,7 @@ services:
       GRAYLOG_GELF_URL: "http://host.docker.internal:12201/gelf"
       GELF_HOST: "security-middleware"
       DRY_RUN_GRAYLOG_MOCK: "false"
+      GELF_SPLIT_POST: "true"
       METRICS_DB_PATH: "/app/state/metrics.db"
       DEAD_LETTER_FILE: "/app/state/dead_letter_logs.jsonl"
       DLQ_BACKEND: "broker"

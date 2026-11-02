@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import random
 import time
@@ -33,11 +34,13 @@ class GraylogDeliveryClient:
         self,
         sleep_fn: Optional[Callable[[float], None]] = None,
         jitter_fn: Optional[Callable[[float, float], float]] = None,
+        split_post: Optional[bool] = None,
     ) -> None:
         self._sleep_fn: Callable[[float], None] = sleep_fn or (lambda s: time.sleep(s))
         self._jitter_fn: Callable[[float, float], float] = jitter_fn or (
             lambda a, b: random.uniform(a, b)
         )
+        self._split_post = split_post
 
     def deliver_batch(
         self,
@@ -54,6 +57,7 @@ class GraylogDeliveryClient:
         get_assigned_partitions_fn: Optional[Callable[[], List[TopicPartition]]] = None,
         should_abort_fn: Optional[Callable[[], bool]] = None,
         messages: Optional[List[Any]] = None,
+        split_post: Optional[bool] = None,
     ) -> DeliveryOutcome:
         """
         Ships `gelf_batch` to `gelf_url` over HTTP POST.
@@ -80,6 +84,14 @@ class GraylogDeliveryClient:
                         return list(raw)
             return []
 
+        use_split = split_post if split_post is not None else self._split_post
+        if use_split is None:
+            try:
+                import config
+                use_split = getattr(config, "GELF_SPLIT_POST", False)
+            except Exception:
+                use_split = False
+
         ndjson_payload = serialize_ndjson_batch(gelf_batch)
         attempt = 0
         paused = False
@@ -100,10 +112,33 @@ class GraylogDeliveryClient:
                 attempt += 1
                 t0 = time.monotonic()
                 try:
-                    response = http_client.post(
-                        gelf_url,
-                        **post_kwargs,
-                    )
+                    if use_split and len(gelf_batch) > 1:
+                        headers = post_kwargs.get("headers")
+
+                        def _send_single(doc: Dict[str, Any]) -> httpx.Response:
+                            return http_client.post(gelf_url, json=doc, headers=headers)
+
+                        max_workers = min(20, len(gelf_batch))
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=max_workers
+                        ) as executor:
+                            futures = [
+                                executor.submit(_send_single, doc) for doc in gelf_batch
+                            ]
+                            responses = [f.result() for f in futures]
+
+                        non_2xx = [
+                            r for r in responses if not (200 <= r.status_code < 300)
+                        ]
+                        if non_2xx:
+                            response = non_2xx[0]
+                        else:
+                            response = responses[0]
+                    else:
+                        response = http_client.post(
+                            gelf_url,
+                            **post_kwargs,
+                        )
                     latency = max(0.0, time.monotonic() - t0)
                     record_graylog_delivery_latency(latency)
 
