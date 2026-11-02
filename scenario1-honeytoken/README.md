@@ -1,58 +1,60 @@
 # 시나리오 1 — 허니토큰 기만 탐지
 
-정상 사용자는 쓰지 않는 미끼 계정을 심어두고, 그 계정으로 로그인하는 순간 1회 만에 침입으로 확정해 자동 차단합니다.
+정상 사용자는 쓰지 않는 미끼 계정을 EngineSquare 회원 목록에 섞어 두고, 그 계정으로 로그인하는 순간 1회 만에 침입으로 확정해 자동 차단합니다.
 
 ```
-미끼 계정 로그인 → 메인 API 서버: 401 위장 응답 + 미끼 사용 기록
-  ├─ logs/security.log → Wazuh 에이전트 → 룰 100500 (레벨 15)
-  └─ GELF → Graylog 이벤트 → n8n → IP 차단 → 메신저 알림 · 인시던트 티켓
+공격자가 5001 로그인에 미끼 계정 입력
+  → 웹앱: 일반 로그인 실패와 같은 화면(200) + 미끼 사용 기록
+  → GELF(rule=honeytoken) → Graylog 이벤트 "S1 Honeytoken used"
+  → n8n Webhook(honeytoken)
+  → 공용 API POST /automation/honeytoken-response
+      → 인시던트 티켓(INC-HONEY-xxx) · 거부 이벤트 · 공용 IP 차단(blocked_ips)
+  → 응답 changed=true 일 때만 디스코드 알림
 ```
 
-## 바뀐 파일
+차단 목록은 시나리오 3과 같은 `blocked_ips`를 씁니다. 차단된 IP는 5001 웹앱 전체에 403을 받습니다(관리자용 localhost는 예외).
+
+## 코드 위치
+
+시나리오 1 코드는 이 폴더가 아니라 공용 웹앱·API에 들어 있습니다.
+
+| 위치 | 내용 |
+|---|---|
+| `web-app/app.py` 끝의 시나리오 1 블록 | 미끼 로그인 탐지·위장 응답, Graylog·Middleware 신고, 차단 IP 403, 미끼 세션 차단, 미끼 심기(`/admin/honeytoken`, `seed-honeytoken`) |
+| `web-app/security_store.py` | `honeytokens` 표, 미끼 조회·사용 기록, 관리자 화면 현황 |
+| `web-app/templates/admin.html` | 관리자 화면 '시나리오 관리' 박스(미끼 현황·미끼 심기) |
+| `app.py`(공용 API) `/automation/honeytoken-response` | 티켓·이벤트·차단 처리, `changed` 반환 |
+
+이 폴더에는 설정 파일만 있습니다.
 
 | 파일 | 내용 |
 |---|---|
-| `models/honeytoken.py`, `models/__init__.py` | 미끼 목록 표(`honeytokens`) |
-| `app.py` | 미끼 심기 명령 `seed-honeytoken` |
-| `controllers/auth_controller.py` | 로그인 시 미끼 탐지, 401 위장 응답, Graylog 전송 |
-| `controllers/seclog.py` | security.log에 `honeytoken_used` 기록 |
-| `wazuh/scenario1_decoder.xml`, `wazuh/scenario1_rules.xml` | Wazuh 디코더·룰(100500) |
-| `n8n/scenario1_honeytoken.json` | n8n 대응 워크플로우 (토큰·키는 `YOUR_...`로 비워둠) |
-| `controllers/admin_controller.py` | 허니토큰 현황·생성·회수 API, 가짜 관리자 키 탐지, 관제 화면 요약·계정명 추천 API |
-| `controllers/page_controller.py` | 관리자 페이지에 가짜 관리자 키 심기, 관제 화면 주소(`/honeytoken`) |
-| `templates/admin.html` | 관리 콘솔 "허니토큰(미끼) 관리" 섹션 (10초 자동 갱신) |
-| `templates/honeytoken.html` | 시나리오 1 관제 화면 (경보 배너·대응 타임라인·미끼 관리, 10초 자동 갱신) |
 | `graylog/scenario1_content_pack.json` | Graylog 알림·이벤트 정의 콘텐츠 팩 |
-
-> **폴더 구성**: `app/`은 메인 API 서버(Flask 게시판, `gamedh823-cmd/Aleph-Board-Team3` 기준)에서 시나리오 1을 위해 추가·수정한 파일입니다. 같은 경로에 덮어쓰거나 해당 부분을 옮겨 붙여 사용합니다. `wazuh/`, `n8n/`, `graylog/`은 아래 설정 순서에서 그대로 사용합니다.
+| `n8n/scenario1_honeytoken.json` | n8n 대응 워크플로우(디스코드 주소는 `YOUR_...`로 비워둠) |
 
 ## 설정 순서
 
-### 1. 미끼 계정 심기
-서버를 한 번 실행해 표를 만든 뒤(`python app.py`), `team-board` 폴더에서:
-```bash
-python -m flask --app app.py seed-honeytoken HT-001 backup_admin
+### 1. 서버 실행
+프로젝트 최상위 `README.md`의 안내대로 Docker(MySQL·Middleware·Graylog·n8n)를 켠 뒤, 최상위 폴더 PowerShell에서:
+```powershell
+.\start-enginesquare.ps1
 ```
+웹앱이 처음 실행될 때 `honeytokens` 표가 자동으로 만들어집니다.
 
-### 2. Wazuh
+### 2. 미끼 계정 심기
+관리자 로그인 → 관리자 → '시나리오 관리' 박스 → 미끼 번호 `HT-001`, 계정 이름 `backup_admin` → 미끼 심기.
+
+또는 `web-app` 폴더에서:
 ```bash
-docker cp wazuh/scenario1_decoder.xml wazuh-manager:/var/ossec/etc/decoders/scenario1_decoder.xml
-docker cp wazuh/scenario1_rules.xml wazuh-manager:/var/ossec/etc/rules/scenario1_rules.xml
-docker exec wazuh-manager chown wazuh:wazuh /var/ossec/etc/decoders/scenario1_decoder.xml /var/ossec/etc/rules/scenario1_rules.xml
-docker exec wazuh-manager /var/ossec/bin/wazuh-control restart
+python -m flask --app app seed-honeytoken HT-001 backup_admin
 ```
-Windows 에이전트 설정(`C:\Program Files (x86)\ossec-agent\ossec.conf`, 관리자 권한)의 `</ossec_config>` 위에 추가 후 에이전트 재시작(`Restart-Service -Name wazuh`):
-```xml
-<localfile>
-  <log_format>syslog</log_format>
-  <location>본인경로\team-board\logs\security.log</location>
-</localfile>
-```
+같은 이름의 계정이 이미 있으면 덮어쓰지 않고 안내만 합니다. 미끼 계정의 비밀번호는 아무도 모르는 랜덤 값이며, 로그인은 항상 일반 실패 화면으로 응답합니다.
 
 ### 3. Graylog
-**빠른 설정:** System → Content Packs → Upload → `graylog/scenario1_content_pack.json` 업로드 → Install. 알림과 이벤트 정의가 한 번에 만들어집니다. URL 허용 목록은 아래처럼 따로 추가해야 합니다.
+System → Content Packs → Upload → `graylog/scenario1_content_pack.json` → Install. 알림과 이벤트 정의가 한 번에 만들어집니다.
 - **URL 허용 목록**(System → Configurations → URL Whitelist): `http://host.docker.internal:5678/webhook/honeytoken` (Exact match)
-- **알림**(Alerts → Notifications): `S1 n8n Webhook (honeytoken)`, Custom HTTP Notification, POST, 위 URL, 본문:
+- **이벤트 정의** `S1 Honeytoken used`: Filter `rule:honeytoken`, 10초 범위 / 10초마다 실행, 필드 `src_ip`·`token_id`·`placement`·`username`
+- **알림** `S1 n8n Webhook (honeytoken)`: POST, 위 URL, 본문:
   ```json
   {
     "event_type": "honeytoken_used",
@@ -64,44 +66,33 @@ Windows 에이전트 설정(`C:\Program Files (x86)\ossec-agent\ossec.conf`, 관
     "title": "${event_definition_title}"
   }
   ```
-- **이벤트 정의**(Alerts → Event Definitions): `S1 Honeytoken used`, Priority High
-  - 조건: Filter, 검색어 `rule:honeytoken`, 10초 범위 / 10초마다 실행, 집계 없음
-  - 필드: `src_ip`, `token_id`, `placement`, `username` (각각 Template `${source.필드명}`)
-  - 알림: 위 알림 연결, Grace Period 0
 
 ### 4. n8n
-1. 워크플로우 화면 → Import from File → `n8n/scenario1_honeytoken.json`
-2. `YOUR_...` 자리에 값 넣기: 디스코드·슬랙 웹후크 주소, 텔레그램 봇 토큰·채팅방 번호, `IP 차단`·`인시던트 티켓` 노드의 `X-API-Key`(= `.env`의 `ADMIN_API_KEY`)
-3. Publish
+1. Create Workflow → ⋯ → Import from File → `n8n/scenario1_honeytoken.json`
+2. `디스코드` 노드 URL의 `YOUR_DISCORD_WEBHOOK_URL`을 실제 웹후크 주소로 바꾸기
+3. Save → Publish
+
+`IP 차단 (공용 API)` 노드는 `http://host.docker.internal:5000/automation/honeytoken-response`로 보냅니다. n8n과 API가 다른 PC에 있으면 `host.docker.internal`을 API 서버 PC의 IP로 바꿉니다. n8n은 노드에서 환경변수 읽기를 기본으로 막기 때문에 주소는 고정값으로 넣었습니다.
 
 ## 시험 방법
 
-```powershell
-# 1) 정상 로그인 → 알림 없어야 함
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/auth/login -ContentType 'application/json' -Body '{"username":"normal_user","password":"test1234"}'
-# 2) 미끼 로그인 → 401 응답, 약 10초 뒤 메신저 알림
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/api/auth/login -ContentType 'application/json' -Body '{"username":"backup_admin","password":"1234"}'
-# 3) 재접속 → 403 (차단된 IP)
+**n8n 이후 단계만 확인**(Graylog 없이, Git Bash):
+```bash
+curl -s -X POST http://localhost:5678/webhook/honeytoken -H "Content-Type: application/json" -d '{"src_ip":"10.10.10.10","token_id":"HT-001","username":"backup_admin","placement":"users_table","timestamp":"2026-11-02T02:30:00.000Z"}'
 ```
-차단 해제: `POST /api/admin/unblock` + 헤더 `X-API-Key`, 본문 `{"ip":"127.0.0.1"}`
+- 디스코드 알림 1회, 대시보드에 시나리오 1 티켓(`INC-HONEY-...`), 관리자 화면 차단 IP 목록에 `10.10.10.10`
+- 같은 요청을 다시 보내면 알림 없이 티켓 횟수만 증가(`changed=false`)
+- 확인 후 관리자 화면에서 차단 해제
 
-### 관리 콘솔
-관리자로 로그인 → `/admin` → "허니토큰(미끼) 관리"에서 미끼 계정·관리자 키를 심고 회수할 수 있습니다.
-가짜 관리자 키는 관리자 페이지 소스 주석에 숨겨져 있으며, 이 키로 관리자 API를 호출하면 401 위장 응답과 함께 탐지·차단됩니다.
-
-### 관제 화면
-관리자로 로그인 → `/honeytoken`. 미끼가 쓰이면 경보 배너가 뜨고, 미끼 사용 → 탐지 → IP 차단 → 인시던트 티켓까지 걸린 시간을 타임라인으로 보여줍니다. 미끼 계정명은 추천 이름 중에서 골라 심을 수 있습니다.
-
-## 시험 결과 (2026-10-22)
-
-| 확인 항목 | 결과 |
-|---|---|
-| 위장 응답 | 일반 로그인 실패와 같은 401 |
-| 즉시 탐지 | 1회 사용으로 Wazuh 레벨 15, Graylog 이벤트 발생 |
-| 대응 시간 | 공격부터 차단까지 약 10초 (목표 30초 이내) |
-| 차단 | 공격 IP 재접속 시 403 |
-| 오탐 | 정상 계정 로그인 시 탐지 0건 |
+**전체 흐름**(Kali → 5001):
+```bash
+curl -i -X POST "http://<Windows IP>:5001/login" -d "username=backup_admin&password=1234"
+```
+- 응답은 일반 로그인 실패와 같은 화면(200, "아이디 또는 비밀번호가 올바르지 않습니다.")
+- 10초 안팎으로 디스코드 알림, 이후 같은 IP의 5001 접속은 403
+- Kali에서 접속하려면 웹앱이 `0.0.0.0`으로 실행되어 있어야 합니다(`web-app` 폴더에서 `python -m flask --app app run --host 0.0.0.0 --port 5001`).
 
 ## 참고
-- 공통 JSON 규격(`client_ip`, `event_type` 등)에 맞춘 필드명 변경은 규격 확정 후 반영 예정입니다.
-- 차단은 현재 메인 API 서버의 차단 기능으로 동작하며, pfSense 연동은 팀 망 구성 후 확장합니다.
+- 로그 전송(Graylog·Middleware) 실패는 로그인 화면에 드러내지 않고 웹앱 서버 로그에 경고로 남깁니다(`.runtime-logs/web.err.log`).
+- 탐지 건수는 티켓별 `occurrence_count` 합계입니다. Graylog가 10초 단위로 검사하므로 짧은 시간의 여러 시도는 한 번으로 묶일 수 있습니다.
+- 시나리오 1과 3은 같은 차단 목록을 쓰므로, 시연 사이에는 관리자 화면에서 차단을 해제합니다.
