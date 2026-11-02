@@ -814,8 +814,10 @@ def _s1_report(token, ip):
     try:
         with _s1_socket.socket(_s1_socket.AF_INET, _s1_socket.SOCK_DGRAM) as sock:
             sock.sendto(_s1_json.dumps(gelf).encode("utf-8"), (S1_GRAYLOG_HOST, S1_GRAYLOG_GELF_PORT))
-    except OSError:
-        pass
+    except OSError as error:
+        # 사용자 화면에는 드러내지 않고(위장 유지) 운영자용 서버 로그에만 남긴다
+        app.logger.warning("Scenario 1 GELF send failed: host=%s port=%s token=%s ip=%s error=%s",
+                           S1_GRAYLOG_HOST, S1_GRAYLOG_GELF_PORT, token["token_id"], ip, error)
     if not S1_MIDDLEWARE_URL:
         return
     event = {
@@ -834,8 +836,9 @@ def _s1_report(token, ip):
         with _s1_urlopen(_S1Request(S1_MIDDLEWARE_URL, data=_s1_json.dumps(event, ensure_ascii=False).encode("utf-8"),
                                     headers=headers, method="POST"), timeout=0.5):
             pass
-    except (OSError, _S1URLError, TimeoutError):
-        pass
+    except (OSError, _S1URLError, TimeoutError) as error:
+        app.logger.warning("Scenario 1 Middleware forward failed: url=%s token=%s ip=%s error=%s",
+                           S1_MIDDLEWARE_URL, token["token_id"], ip, error)
 
 
 @app.before_request
@@ -927,7 +930,8 @@ def scenario1_admin_box():
     if request.endpoint != "admin" or not g.get("current_user") or g.current_user["role"] != "admin":
         return {}
     tokens, tickets = security_store.honeytoken_overview()
-    return {"s1": {"tokens": tokens, "hits": len(tickets),
+    # 탐지 건수는 공용 대시보드와 같이 티켓별 occurrence_count 합계
+    return {"s1": {"tokens": tokens, "hits": sum(int(t["occurrence_count"] or 0) for t in tickets),
                    "blocked": sum(1 for t in tickets if t["blocked_at"]),
                    "last": tickets[0] if tickets else None}}
 
