@@ -1261,15 +1261,10 @@ async def _broker_lag_refresh_loop(
         try:
             active_mw = mw or _active_middleware()
             producer = getattr(active_mw, "producer", None)
-            if producer is not None and hasattr(producer, "_storage"):
-                storage = producer._storage
+            if producer is not None and hasattr(producer, "refresh_unconsumed_lag"):
                 for t in (BROKER_TOPIC, BROKER_PRIORITY_TOPIC, None):
-                    # Query unconsumed lag using asyncio.to_thread to prevent blocking main event loop
-                    lag = await asyncio.to_thread(
-                        storage.get_total_unconsumed_lag, None, t
-                    )
-                    if hasattr(producer, "update_cached_lag"):
-                        producer.update_cached_lag(lag, topic=t)
+                    # 메인 이벤트 루프 블로킹을 방지하기 위해 워커 스레드에서 lag 조회 및 캐시 갱신 수행
+                    await asyncio.to_thread(producer.refresh_unconsumed_lag, t)
         except asyncio.CancelledError:
             logger.info("Broker lag background refresh task cancelled.")
             break

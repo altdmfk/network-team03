@@ -1007,10 +1007,11 @@ class LightweightProducer:
         self._unwritten_lock = threading.Lock()
         self._unwritten_cond = threading.Condition(self._unwritten_lock)
 
-        # In-memory periodic lag cache variables to eliminate blocking DB queries from produce hot path
-        self._cached_lag: Union[int, Dict[Optional[str], int]] = {}
-        self._cache_updated_at: Union[float, Dict[Optional[str], float]] = {}
+        # produce() 핫패스에서 동기 DB 쿼리를 배제하기 위한 인메모리 캐시
+        self._cached_lag: Dict[Optional[str], int] = {}
         self._lag_refresh_lock = threading.Lock()
+        self._partition_count_cache: Dict[str, int] = {}
+        self._partition_count_lock = threading.Lock()
 
         self._stop_event = threading.Event()
         self._writer_thread = threading.Thread(
@@ -1021,39 +1022,35 @@ class LightweightProducer:
         self._writer_thread.start()
 
     def _get_num_partitions(self, topic: str) -> int:
-        return self._storage.get_topic_partitions(topic)
+        """
+        Returns cached partition count for the given topic from memory.
+        Queries SQLite storage only once on the initial cache miss per topic,
+        since topic partition counts are immutable at runtime.
+        """
+        with self._partition_count_lock:
+            if topic in self._partition_count_cache:
+                return self._partition_count_cache[topic]
+
+            n_parts = self._storage.get_topic_partitions(topic)
+            self._partition_count_cache[topic] = n_parts
+            return n_parts
 
     def get_cached_lag(self, topic: Optional[str] = None) -> int:
         """
         Returns cached unconsumed lag for the given topic immediately from memory.
         Returns 0 (safe default) during cold start before the first background refresh.
-        Guarantees zero SQLite queries and zero event loop blocking on the hot path.
         """
         with self._lag_refresh_lock:
-            if isinstance(self._cached_lag, dict):
-                if topic in self._cached_lag:
-                    return self._cached_lag[topic]
-                if None in self._cached_lag:
-                    return self._cached_lag[None]
-                return 0
-            elif isinstance(self._cached_lag, (int, float)):
-                return int(self._cached_lag)
-            return 0
+            if topic in self._cached_lag:
+                return self._cached_lag[topic]
+            return self._cached_lag.get(None, 0)
 
     def update_cached_lag(
         self, lag: int, topic: Optional[str] = None
     ) -> None:
         """Updates in-memory cached lag without DB queries."""
         with self._lag_refresh_lock:
-            now = time.monotonic()
-            if isinstance(self._cached_lag, dict):
-                self._cached_lag[topic] = int(lag)
-            else:
-                self._cached_lag = int(lag)
-            if isinstance(self._cache_updated_at, dict):
-                self._cache_updated_at[topic] = now
-            else:
-                self._cache_updated_at = now
+            self._cached_lag[topic] = int(lag)
 
     def refresh_unconsumed_lag(self, topic: Optional[str] = None) -> int:
         """
@@ -1064,8 +1061,6 @@ class LightweightProducer:
         lag = self._storage.get_total_unconsumed_lag(topic=topic)
         self.update_cached_lag(lag, topic=topic)
         return lag
-
-    refresh_lag_cache = refresh_unconsumed_lag
 
     def produce(
         self,
