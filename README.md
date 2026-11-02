@@ -86,3 +86,17 @@ python web-app/app.py
 웹앱 접속 주소는 `http://127.0.0.1:5001/`입니다.
 DB 설정, 권한과 실행 방법은 [web-app README](./web-app/README.md),
 시나리오 3의 Graylog·n8n·Wazuh 구성은 [시나리오 3 README](./scenario3-api-key-compromised/README.md)를 참고합니다.
+
+### API·웹앱 함께 실행
+
+MySQL과 Middleware를 먼저 켜고, 프로젝트 루트의 `.env.example`을 `.env`로 복사해
+`MIDDLEWARE_API_KEY`에 공유받은 실제 키를 입력합니다. 기존 `.env`가 있으면 그대로 사용합니다.
+`.env`는 Git에서 제외되며 예시 파일에는 실제 키를 저장하지 않습니다.
+
+```powershell
+.\start-enginesquare.ps1
+```
+
+실행 파일이 `.env`를 읽어 API(5000)와 웹앱(5001)에 같은 설정을 전달합니다.
+기존 서버는 먼저 종료하고 실행합니다. 종료하려면 실행 창에서 Enter를 누릅니다.
+설정 우선순위와 로그 확인 방법은 [web-app 실행 안내](./web-app/README.md#실행-명령)를 참고합니다.

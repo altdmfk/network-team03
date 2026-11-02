@@ -29,17 +29,28 @@ def initialize_incidents(cursor):
     cursor.execute("INSERT INTO incident_counters (name,last_number) VALUES ('api',%s) "
                    "ON DUPLICATE KEY UPDATE last_number=GREATEST(last_number,VALUES(last_number))", (maximum,))
 
+    cursor.execute("SELECT COALESCE(MAX(number),0) AS last_number FROM ("
+                   "SELECT CAST(SUBSTRING(id,11) AS UNSIGNED) AS number FROM incident_tickets WHERE id REGEXP '^INC-HONEY-[0-9]+$' "
+                   "UNION ALL SELECT CAST(SUBSTRING(incident_id,11) AS UNSIGNED) FROM incident_registry WHERE incident_id REGEXP '^INC-HONEY-[0-9]+$' "
+                   "UNION ALL SELECT CAST(SUBSTRING(incident_id,11) AS UNSIGNED) FROM security_events WHERE incident_id REGEXP '^INC-HONEY-[0-9]+$'"
+                   ") honey_numbers")
+    maximum = cursor.fetchone()["last_number"]
+    cursor.execute("INSERT INTO incident_counters (name,last_number) VALUES ('honey',%s) "
+                   "ON DUPLICATE KEY UPDATE last_number=GREATEST(last_number,VALUES(last_number))", (maximum,))
+
 
 def assign_incident(cursor, event_type, ip, key_id, supplied=None):
-    """Caller holds a transaction; all allocations use one persistent row lock."""
+    """Caller holds a transaction; allocations lock their scenario counter row."""
     event_type, ip, key_id = event_type.lower(), ip or "", key_id or ""
+    counter, prefix = ("honey", "INC-HONEY-") if event_type == "honeytoken_used" else ("api", "INC-API-")
+    pattern = re.escape(prefix) + r"\d{3,}"
     fingerprint = hashlib.sha256(json.dumps([event_type, ip, key_id], ensure_ascii=False).encode()).hexdigest()
-    cursor.execute("SELECT last_number FROM incident_counters WHERE name='api' FOR UPDATE")
+    cursor.execute("SELECT last_number FROM incident_counters WHERE name=%s FOR UPDATE", (counter,))
     number = int(cursor.fetchone()["last_number"])
     cursor.execute("SELECT incident_id FROM incident_registry WHERE fingerprint=%s", (fingerprint,))
     registered = cursor.fetchone()
     supplied = str(supplied or "").strip()
-    if supplied and not re.fullmatch(r"INC-API-\d{3,}", supplied):
+    if supplied and not re.fullmatch(pattern, supplied):
         raise IncidentConflict("인시던트 ID 형식이 올바르지 않습니다.")
     if registered:
         if supplied and supplied != registered["incident_id"]:
@@ -50,7 +61,7 @@ def assign_incident(cursor, event_type, ip, key_id, supplied=None):
     existing = cursor.fetchone()
     if existing and supplied and existing["id"] != supplied:
         raise IncidentConflict("기존 티켓과 전달된 인시던트 ID가 일치하지 않습니다.")
-    identifier = existing["id"] if existing else supplied or f"INC-API-{number + 1:03d}"
+    identifier = existing["id"] if existing else supplied or f"{prefix}{number + 1:03d}"
     cursor.execute("SELECT event,ip,api_key_id FROM incident_tickets WHERE id=%s", (identifier,))
     owner = cursor.fetchone()
     if owner and [owner["event"].lower(), owner["ip"] or "", owner["api_key_id"] or ""] != [event_type, ip, key_id]:
@@ -59,8 +70,8 @@ def assign_incident(cursor, event_type, ip, key_id, supplied=None):
     owner = cursor.fetchone()
     if owner and owner["fingerprint"] != fingerprint:
         raise IncidentConflict("이 인시던트 ID는 다른 탐지 대상에서 사용 중입니다.")
-    if re.fullmatch(r"INC-API-\d{3,}", identifier):
-        cursor.execute("UPDATE incident_counters SET last_number=GREATEST(last_number,%s) WHERE name='api'", (int(identifier[8:]),))
+    if re.fullmatch(pattern, identifier):
+        cursor.execute("UPDATE incident_counters SET last_number=GREATEST(last_number,%s) WHERE name=%s", (int(identifier[len(prefix):]), counter))
     cursor.execute("INSERT INTO incident_registry (incident_id,fingerprint,event_type,client_ip,api_key_id) VALUES (%s,%s,%s,%s,%s)",
                    (identifier, fingerprint, event_type, ip, key_id))
     return identifier
