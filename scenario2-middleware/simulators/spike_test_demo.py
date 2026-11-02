@@ -30,6 +30,8 @@ from config import (
 )
 
 KILL_CHAIN_IP = KILL_CHAIN_TARGET_IP
+INGESTOR_BASE_URL = os.environ.get("INGESTOR_BASE_URL", INGESTOR_BASE_URL.replace("localhost", "127.0.0.1"))
+MOCK_GRAYLOG_BASE_URL = os.environ.get("MOCK_GRAYLOG_BASE_URL", MOCK_GRAYLOG_BASE_URL.replace("localhost", "127.0.0.1"))
 
 
 def build_progress_bar(current: int, total: int, width: int = 24) -> str:
