@@ -29,6 +29,10 @@ htmlcov/
 .DS_Store
 
 # Runtime state
+.env
+.env.*
+!.env.example
+.runtime-logs/
 security_events.jsonl
 state/
 *.db
