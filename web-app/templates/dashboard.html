@@ -60,7 +60,7 @@
               <td title="{{ ticket.id }}">{{ ticket.id }}</td><td><code>{{ ticket.ip }}</code></td>
               <td><span class="severity {{ ticket.severity_class }}">{{ ticket.severity }}</span></td>
               <td><span class="status {{ 'warning' if ticket.status == '열림' else 'normal' }}">{{ ticket.status }}</span></td>
-              <td title="{{ ticket.event }}"><code>{{ ticket.event }}</code></td><td>{{ ticket.occurrence_count }}회</td><td title="{{ ticket.action }}">{{ ticket.action }}</td>
+              <td title="{{ ticket.event }}"><code>{{ ticket.event }}</code></td><td>{{ ticket.occurrence_count }}회</td><td title="{{ ticket.action }}">{{ ticket.action }}{% if ticket.event == 'killchain_critical' %}<br><small>외부 대응 보고</small>{% endif %}</td>
               <td class="ticket-title" title="{{ ticket.title }}">{{ ticket.title }}</td><td>{{ ticket.created_at|display_time }}</td>
               <td>{% if ticket.status == '열림' and current_user.role == 'admin' %}
                 <form method="post" action="{{ ticket_action_url() }}" data-confirm-title="티켓 종료" data-confirm-message="{{ ticket.id }} 티켓을 종료할까요?" data-confirm-note="IP 차단과 API 키 상태는 유지됩니다." data-confirm-label="종료">

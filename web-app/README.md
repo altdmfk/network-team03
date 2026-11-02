@@ -43,6 +43,43 @@ n8n은 `changed=true`일 때만 알림을 발송하도록 설정할 수 있습�
 이 수신부만으로 웹앱 로그인 탐지나 웹앱 전체 접속 차단이 활성화되지는 않습니다.
 팀원 측 로그인 탐지·n8n·허니토큰 페이지 구현은 별도로 연동해야 합니다.
 
+### 시나리오 4 CRITICAL 결과 수신
+
+공용 API의 `POST /automation/killchain-response`에 JSON을 전송합니다.
+같은 PC의 Docker n8n에서는 `http://host.docker.internal:5000/automation/killchain-response`,
+다른 PC에서는 `http://API서버PC의IP:5000/automation/killchain-response`를 사용합니다.
+
+```json
+{
+  "event_type": "killchain_critical",
+  "client_ip": "10.10.10.10",
+  "status_code": 200,
+  "target_resource": "/device/control",
+  "severity": "높음",
+  "status": "열림",
+  "action": "pfSense 차단 + IoT Lockdown",
+  "reason": "정찰→유출키재사용→IoT제어 3단계가 10분 내 충족",
+  "timestamp": "2026-11-02T13:00:00+09:00"
+}
+```
+
+- `event_type=killchain_critical`, 유효한 IP 문자열 `client_ip`, ISO 발생 시각 `timestamp`가 필요합니다.
+  시간대 없는 시각은 한국 시각(+09:00)으로 처리합니다.
+- `incident_id`를 생략하면 별도 카운터에서 `INC-KILLCHAIN-001` 형식으로 발급합니다.
+  n8n은 응답의 ID를 사용합니다. 외부에서 지정한다면 `INC-KILLCHAIN-...` 형식이어야 하며,
+  다른 사건의 번호와 충돌하거나 동일 IP의 기존 ID와 다르면 HTTP 409를 반환합니다.
+- 같은 IP는 기존 티켓의 횟수를 증가시킵니다. 같은 인시던트·발생 시각의 재전송은 중복 제외합니다.
+- 티켓은 `시나리오 4`, `킬체인 상관분석 CRITICAL`, `높음`, `열림`으로 저장합니다.
+  최근 이벤트 판정은 HTTP 응답 코드와 구분하여 `탐지`로 표시합니다.
+- `killchain_warning`은 `status=ignored`, `ticket_created=false`를 반환하며 티켓·이벤트를 저장하지 않습니다.
+- 응답에는 `incident_id`, `client_ip`, `status`(created/duplicate), `ticket_created`,
+  `shared_block_applied=false`가 포함됩니다. `ticket_created`는 이번에 새 탐지 기록을 수신했는지를 뜻하며,
+  기존 IP의 티켓 횟수를 증가시킨 경우에도 true입니다.
+- pfSense 차단·IoT Lockdown은 담당 n8n이 실행합니다. 공용 API는 API 키·공유 차단 목록을 변경하지 않습니다.
+  대시보드 조치의 `외부 대응 보고`는 전달받은 기록이며 현재 장비 차단 상태를 확인한 표시는 아닙니다.
+  공용 관리자 화면에는 시나리오 4 전용 조회나 장비 제어를 추가하지 않습니다.
+- MySQL·수신부·화면 검증과 실제 하드웨어 대응 검증은 구분합니다.
+
 ### 시나리오 3 연동
 
 API 요청 로그는 팀 Middleware를 거쳐 Graylog로 전달되며, 시나리오 3 n8n 워크플로가 키 폐기·재발급과 IP 차단을 수행합니다.

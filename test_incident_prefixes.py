@@ -11,7 +11,8 @@ sys.path.pop(0)
 class IncidentPrefixTest(unittest.TestCase):
     def test_separate_counters(self):
         for event, counter, prefix in [('honeytoken_used', 'honey', 'INC-HONEY-'),
-                                       ('api_key_compromised', 'api', 'INC-API-')]:
+                                       ('api_key_compromised', 'api', 'INC-API-'),
+                                       ('killchain_critical', 'killchain', 'INC-KILLCHAIN-')]:
             cursor = MagicMock()
             cursor.fetchone.side_effect = [{'last_number': 4}, None, None, None, None]
             self.assertEqual(assign_incident(cursor, event, '192.0.2.1', ''), prefix + '005')
