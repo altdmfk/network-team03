@@ -31,6 +31,21 @@ class PipelineSettings(BaseModel):
             for old_key, new_key in mapping.items():
                 if old_key in d and new_key not in d:
                     d[new_key] = d[old_key]
+            raw_gelf = d.get("graylog_gelf_url")
+            if isinstance(raw_gelf, str) and "," in raw_gelf:
+                parsed_urls = [u.strip() for u in raw_gelf.split(",") if u.strip()]
+                if parsed_urls:
+                    d["graylog_gelf_url"] = parsed_urls[0]
+                    if "graylog_gelf_urls" not in d:
+                        d["graylog_gelf_urls"] = parsed_urls
+            elif isinstance(raw_gelf, list):
+                parsed_urls = [str(u).strip() for u in raw_gelf if str(u).strip()]
+                if parsed_urls:
+                    d["graylog_gelf_url"] = parsed_urls[0]
+                    if "graylog_gelf_urls" not in d:
+                        d["graylog_gelf_urls"] = parsed_urls
+            elif isinstance(raw_gelf, str) and raw_gelf.strip() and "graylog_gelf_urls" not in d:
+                d["graylog_gelf_urls"] = [raw_gelf.strip()]
             return d
         return data
 
@@ -75,6 +90,9 @@ class PipelineSettings(BaseModel):
     mock_graylog_base_url: str = Field(default="http://localhost:12201", min_length=1)
 
     graylog_gelf_url: str = Field(default="http://localhost:12201/gelf", min_length=1)
+    graylog_gelf_urls: List[str] = Field(
+        default_factory=lambda: ["http://localhost:12201/gelf"]
+    )
     gelf_host: str = Field(default="security-middleware", min_length=1)
     dry_run_graylog_mock: bool = Field(default=False)
     gelf_split_post: bool = Field(default=False)
@@ -218,9 +236,13 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
     mock_graylog_base_url = source.get(
         "MOCK_GRAYLOG_BASE_URL", f"http://localhost:{mock_graylog_port}"
     )
-    graylog_gelf_url = source.get(
+    raw_graylog_gelf_url = source.get(
         "GRAYLOG_GELF_URL", f"{mock_graylog_base_url}/gelf"
     )
+    graylog_gelf_urls = [
+        u.strip() for u in raw_graylog_gelf_url.split(",") if u.strip()
+    ] or [f"{mock_graylog_base_url}/gelf"]
+    graylog_gelf_url = graylog_gelf_urls[0]
 
     batch_size = int(source.get("BATCH_SIZE", "100"))
     if source.get("MAX_LOGS_PER_SEC") is not None:
@@ -384,6 +406,7 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "mock_graylog_port": mock_graylog_port,
         "mock_graylog_base_url": mock_graylog_base_url,
         "graylog_gelf_url": graylog_gelf_url,
+        "graylog_gelf_urls": graylog_gelf_urls,
         "gelf_host": source.get("GELF_HOST", "security-middleware"),
         "dry_run_graylog_mock": _parse_bool(
             source.get("DRY_RUN_GRAYLOG_MOCK", "false")
@@ -476,6 +499,7 @@ MOCK_GRAYLOG_PORT: int = SETTINGS.mock_graylog_port
 MOCK_GRAYLOG_BASE_URL: str = SETTINGS.mock_graylog_base_url
 
 GRAYLOG_GELF_URL: str = SETTINGS.graylog_gelf_url
+GRAYLOG_GELF_URLS: List[str] = list(SETTINGS.graylog_gelf_urls)
 GELF_HOST: str = SETTINGS.gelf_host
 DRY_RUN_GRAYLOG_MOCK: bool = SETTINGS.dry_run_graylog_mock
 GELF_SPLIT_POST: bool = SETTINGS.gelf_split_post

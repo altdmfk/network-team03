@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import os
 import random
@@ -36,6 +37,7 @@ from config import (
     DRY_RUN_GRAYLOG_MOCK,
     GELF_HOST,
     GRAYLOG_GELF_URL,
+    GRAYLOG_GELF_URLS,
     MAX_BACKOFF_SECONDS,
     MAX_BATCHES_PER_SECOND,
     MAX_DELIVERY_RETRIES,
@@ -53,7 +55,11 @@ from middleware.dlq_publisher import (
     DeadLetterSink,
 )
 from middleware.dlq_store import JsonlDeadLetterStore
-from middleware.gelf_transformer import GelfTransformer, transform_to_gelf
+from middleware.gelf_transformer import (
+    GelfTransformer,
+    serialize_ndjson_batch,
+    transform_to_gelf,
+)
 from middleware.logging_utils import configure_logging
 from middleware.models import BatchResult, DeliveryOutcome, RetryPolicy
 from middleware.offset_committer import ExplicitOffsetCommitter
@@ -230,6 +236,10 @@ class GraylogConsumerWorker:
                 headers={"Content-Type": "application/json"},
             )
         )
+        self._mirror_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="graylog-mirror",
+        )
         self._closed = False
 
     @property
@@ -328,6 +338,10 @@ class GraylogConsumerWorker:
         self.stop_metrics_server()
         self.offset_committer.clear_in_flight_batch()
         logger.info("Closing HTTP client, broker consumer, and metrics store...")
+        try:
+            self._mirror_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception as exc:
+            logger.warning("Error shutting down mirror executor: %s", exc)
         try:
             self.http_client.close()
         except Exception as exc:
@@ -479,16 +493,97 @@ class GraylogConsumerWorker:
             self.metrics.reconcile_dlq_replay(count, **kwargs)
             record_dlq_replayed(count)
 
+        primary_url, _ = self._resolve_gelf_urls()
         return self.dlq_store.replay(
             dlq_path=self.dead_letter_file,
             batch_size=self.batch_size,
             acquire_tokens_fn=self.rate_limiter.acquire,
             http_client=self.http_client,
-            gelf_url=GRAYLOG_GELF_URL,
+            gelf_url=primary_url,
             dry_run=DRY_RUN_GRAYLOG_MOCK,
             is_running_fn=lambda: self.running,
             on_chunk_replayed=_on_chunk_replayed,
         )
+
+    def _resolve_gelf_urls(self) -> Tuple[str, List[str]]:
+        """
+        Resolves the primary Graylog GELF URL and any comma-separated secondary (mirror) URLs.
+        Supports both `GRAYLOG_GELF_URL="url1,url2"` and `GRAYLOG_GELF_URLS=["url1", "url2"]`.
+        """
+        raw = GRAYLOG_GELF_URL
+        if isinstance(raw, list):
+            urls = [str(u).strip() for u in raw if str(u).strip()]
+        elif isinstance(raw, str) and "," in raw:
+            urls = [u.strip() for u in raw.split(",") if u.strip()]
+        elif (
+            isinstance(GRAYLOG_GELF_URLS, list)
+            and len(GRAYLOG_GELF_URLS) > 1
+            and GRAYLOG_GELF_URLS[0] == raw
+        ):
+            urls = [str(u).strip() for u in GRAYLOG_GELF_URLS if str(u).strip()]
+        else:
+            single = str(raw).strip() if raw else "http://localhost:12201/gelf"
+            urls = [single]
+
+        if not urls:
+            return "http://localhost:12201/gelf", []
+        return urls[0], urls[1:]
+
+    def _fire_and_forget_secondary_gelf(
+        self,
+        gelf_batch: List[Dict[str, Any]],
+        secondary_urls: List[str],
+        batch_id: Optional[str] = None,
+    ) -> None:
+        """
+        Fires a best-effort, non-blocking copy of `gelf_batch` to secondary Graylog URLs.
+        Does not retry, back off, dead-letter, or block the primary pipeline on failure.
+        """
+        if DRY_RUN_GRAYLOG_MOCK or not secondary_urls or not gelf_batch or self._closed:
+            return
+
+        use_split = getattr(self.delivery_client, "_split_post", None)
+        if use_split is None:
+            use_split = getattr(SETTINGS, "gelf_split_post", False)
+
+        batch_snapshot = list(gelf_batch)
+        mirror_timeout = httpx.Timeout(connect=1.5, read=3.0, write=3.0, pool=1.5)
+
+        def _send_mirror(target_url: str) -> None:
+            try:
+                if use_split and len(batch_snapshot) > 1:
+                    for doc in batch_snapshot:
+                        if not self.running or self._closed:
+                            return
+                        self.http_client.post(
+                            target_url,
+                            json=doc,
+                            timeout=mirror_timeout,
+                        )
+                else:
+                    ndjson_payload = serialize_ndjson_batch(batch_snapshot)
+                    self.http_client.post(
+                        target_url,
+                        content=ndjson_payload,
+                        timeout=mirror_timeout,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[MIRROR GRAYLOG] Fire-and-forget delivery to %s failed (ignored, batch_id=%s): %s",
+                    target_url,
+                    batch_id,
+                    exc,
+                )
+
+        for url in secondary_urls:
+            try:
+                self._mirror_executor.submit(_send_mirror, url)
+            except Exception as exc:
+                logger.warning(
+                    "[MIRROR GRAYLOG] Could not schedule mirror delivery to %s: %s",
+                    url,
+                    exc,
+                )
 
     def _build_retry_policy(self) -> RetryPolicy:
         max_retries = (
@@ -512,21 +607,24 @@ class GraylogConsumerWorker:
             max_backoff_seconds=max_backoff,
         )
 
-    def _deliver_batch_with_backoff(
+    # Backup of the original single-destination delivery method
+    def _deliver_batch_with_backoff_single(
         self,
         gelf_batch: List[Dict[str, Any]],
         batch_id: Optional[str] = None,
         messages: Optional[List[Message]] = None,
+        gelf_url: Optional[str] = None,
     ) -> DeliveryOutcome:
         def _on_dead_letter(batch: List[Dict[str, Any]], **kwargs: Any) -> bool:
             msgs = kwargs.get("messages") or messages
             reason = kwargs.get("reason", "Retries exhausted")
             return self._write_dead_letter_batch(batch, messages=msgs, reason=reason)
 
+        target_url = gelf_url if gelf_url is not None else GRAYLOG_GELF_URL
         return self.delivery_client.deliver_batch(
             gelf_batch=gelf_batch,
             http_client=self.http_client,
-            gelf_url=GRAYLOG_GELF_URL,
+            gelf_url=target_url,
             retry_policy=self._build_retry_policy(),
             dry_run=DRY_RUN_GRAYLOG_MOCK,
             is_running_fn=lambda: self.running,
@@ -536,6 +634,26 @@ class GraylogConsumerWorker:
             get_assigned_partitions_fn=self._get_assigned_partitions,
             should_abort_fn=lambda: self.offset_committer.in_flight_aborted,
             messages=messages,
+        )
+
+    def _deliver_batch_with_backoff(
+        self,
+        gelf_batch: List[Dict[str, Any]],
+        batch_id: Optional[str] = None,
+        messages: Optional[List[Message]] = None,
+    ) -> DeliveryOutcome:
+        primary_url, secondary_urls = self._resolve_gelf_urls()
+        if secondary_urls:
+            self._fire_and_forget_secondary_gelf(
+                gelf_batch=gelf_batch,
+                secondary_urls=secondary_urls,
+                batch_id=batch_id,
+            )
+        return self._deliver_batch_with_backoff_single(
+            gelf_batch=gelf_batch,
+            batch_id=batch_id,
+            messages=messages,
+            gelf_url=primary_url,
         )
 
     def process_single_batch(self, messages: List[Message]) -> BatchResult:

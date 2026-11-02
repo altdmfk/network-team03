@@ -801,6 +801,51 @@ class TestGraylogConsumerWorker:
             assert "json" in c
             assert c["json"]["short_message"] is not None
 
+    def test_deliver_batch_multi_url_fire_and_forget_secondary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from config import load_settings
+
+        settings = load_settings(
+            {
+                "GRAYLOG_GELF_URL": "http://host.docker.internal:12201/gelf,http://secondary-graylog:12201/gelf"
+            }
+        )
+        assert settings.graylog_gelf_url == "http://host.docker.internal:12201/gelf"
+        assert settings.graylog_gelf_urls == [
+            "http://host.docker.internal:12201/gelf",
+            "http://secondary-graylog:12201/gelf",
+        ]
+
+        monkeypatch.setattr(
+            consumer_worker,
+            "GRAYLOG_GELF_URL",
+            "http://host.docker.internal:12201/gelf,http://secondary-graylog:12201/gelf",
+        )
+        db_file = str(tmp_path / "multi_url.db")
+        called_urls: List[str] = []
+
+        def mock_post(url: str, **_kwargs: Any) -> httpx.Response:
+            called_urls.append(url)
+            if "secondary-graylog" in url:
+                raise httpx.ConnectError("Secondary Graylog unreachable")
+            return httpx.Response(status_code=202)
+
+        with SharedMetricsStore(db_file) as store:
+            with GraylogConsumerWorker(
+                metrics_store=store,
+                enable_metrics_server=False,
+            ) as worker:
+                monkeypatch.setattr(worker.http_client, "post", mock_post)
+                gelf_batch = [transform_to_gelf(sample_event_dict(), 0, 1)]
+                outcome = worker._deliver_batch_with_backoff(gelf_batch)
+                worker._mirror_executor.shutdown(wait=True)
+
+                assert outcome is DeliveryOutcome.DELIVERED
+                assert "http://host.docker.internal:12201/gelf" in called_urls
+                assert "http://secondary-graylog:12201/gelf" in called_urls
+                assert called_urls.count("http://secondary-graylog:12201/gelf") == 1
+
     def test_context_manager_deterministic_cleanup(self, tmp_path: Path) -> None:
         db_file = str(tmp_path / "cleanup.db")
         mock_consumer = MagicMock()

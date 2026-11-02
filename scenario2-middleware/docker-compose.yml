@@ -81,7 +81,7 @@ services:
       BROKER_PRIORITY_TOPIC: "security-logs.priority"
       STANDARD_RESERVED_SHARE: "0.3"
       BROKER_CONSUMER_GROUP: "graylog-shipper-group"
-      GRAYLOG_GELF_URL: "http://host.docker.internal:12201/gelf"
+      GRAYLOG_GELF_URL: "${GRAYLOG_GELF_URL:-http://host.docker.internal:12201/gelf}"
       GELF_HOST: "security-middleware"
       DRY_RUN_GRAYLOG_MOCK: "false"
       GELF_SPLIT_POST: "true"
