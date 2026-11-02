@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent / 'web-app'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'web-app'))
 from incident_store import assign_incident, IncidentConflict
 sys.path.pop(0)
 
