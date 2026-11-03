@@ -1,9 +1,9 @@
 {
   "v": 1,
   "id": "a0a572c3-7579-44a3-b3a8-8d7a1e6e2eb9",
-  "rev": 1,
+  "rev": 2,
   "name": "S1 Honeytoken",
-  "summary": "시나리오1 허니토큰 탐지 이벤트·알림",
+  "summary": "시나리오1 허니토큰 탐지 이벤트·알림 (미들웨어 경유)",
   "description": "",
   "vendor": "team3",
   "url": "",
@@ -53,7 +53,7 @@
           },
           "body_template": {
             "@type": "string",
-            "@value": "{\n  \"event_type\": \"honeytoken_used\",\n  \"src_ip\": \"${event.fields.src_ip}\",\n  \"token_id\": \"${event.fields.token_id}\",\n  \"placement\": \"${event.fields.placement}\",\n  \"username\": \"${event.fields.username}\",\n  \"timestamp\": \"${event.timestamp}\",\n  \"title\": \"${event_definition_title}\"\n}"
+            "@value": "{\n  \"event_type\": \"honeytoken_used\",\n  \"src_ip\": \"${event.fields.src_ip}\",\n  \"raw_payload\": \"${event.fields.raw_payload}\",\n  \"timestamp\": \"${event.timestamp}\",\n  \"title\": \"${event_definition_title}\"\n}"
           }
         }
       },
@@ -78,37 +78,17 @@
             "providers": [
               {
                 "type": "template-v1",
-                "template": "${source.src_ip}",
+                "template": "${source.client_ip}",
                 "require_values": false
               }
             ]
           },
-          "token_id": {
+          "raw_payload": {
             "data_type": "string",
             "providers": [
               {
                 "type": "template-v1",
-                "template": "${source.token_id}",
-                "require_values": false
-              }
-            ]
-          },
-          "placement": {
-            "data_type": "string",
-            "providers": [
-              {
-                "type": "template-v1",
-                "template": "${source.placement}",
-                "require_values": false
-              }
-            ]
-          },
-          "username": {
-            "data_type": "string",
-            "providers": [
-              {
-                "type": "template-v1",
-                "template": "${source.username}",
+                "template": "${source.raw_payload}",
                 "require_values": false
               }
             ]
@@ -119,7 +99,7 @@
           "search_within_ms": 10000,
           "query": {
             "@type": "string",
-            "@value": "rule:honeytoken"
+            "@value": "event_type:HONEYTOKEN_ACCESS AND source:security-middleware"
           },
           "cron_expression": null,
           "cron_timezone": null,
@@ -183,7 +163,7 @@
         },
         "description": {
           "@type": "string",
-          "@value": "시나리오1 미끼 계정 사용 감지 — 1회 즉시 확정"
+          "@value": "시나리오1 미끼 계정 사용 감지 — 미들웨어 경유(TCP) 기록 1회 즉시 확정"
         }
       },
       "constraints": [

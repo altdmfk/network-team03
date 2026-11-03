@@ -5,7 +5,8 @@ EngineSquare 회원 목록에 정상 사용자는 쓰지 않는 **미끼 계정*
 
 ```text
 Kali → 5001 로그인에 미끼 계정 입력
-  -> 웹앱: 일반 로그인 실패와 같은 화면(200) + GELF UDP(rule=honeytoken) 전송
+  -> 웹앱: 일반 로그인 실패와 같은 화면(200) + Middleware /ingest로 HONEYTOKEN_ACCESS 전송
+  -> Middleware: 허니토큰 우선 차선(security-logs.priority) -> Graylog GELF HTTP(TCP 12201)
   -> Graylog 이벤트 "S1 Honeytoken used" -> n8n /webhook/honeytoken
   -> 공용 API /automation/honeytoken-response: 티켓(INC-HONEY-...)·이벤트·IP 차단
   -> changed=true일 때만 Discord 알림
@@ -18,7 +19,7 @@ Kali → 5001 로그인에 미끼 계정 입력
 | 구분 | 항목 | 할 일 |
 |---|---|---|
 | `git pull`로 자동 | 웹앱·API 코드, `honeytokens` 표(웹앱 첫 실행 시 생성), 관리자 '시나리오 관리' 박스 | 없음 |
-| **직접 설정 (PC마다 1회)** | ① Graylog GELF **UDP** 입력 | 아래 1단계 |
+| **직접 설정 (PC마다 1회)** | ① Middleware 실행 + Graylog GELF **HTTP** 입력 | 아래 1단계 |
 | | ② Graylog 콘텐츠 팩 + URL 허용 목록 | 아래 2단계 |
 | | ③ n8n 워크플로 가져오기 + Discord 주소 | 아래 3단계 |
 | | ④ 미끼 계정 심기 | 아래 4단계 |
@@ -27,27 +28,19 @@ Kali → 5001 로그인에 미끼 계정 입력
 `start-enginesquare.ps1` 실행은 [루트 README](../README.md)와 [시나리오 3 README](../scenario3-api-key-compromised/README.md)를 따릅니다.
 시작 전에 `git pull`로 최신 main을 받습니다.
 
-### 1단계. Graylog GELF UDP 입력 만들기
+### 1단계. Middleware와 Graylog GELF HTTP 입력 확인
 
-시나리오 1 웹앱은 Graylog로 **GELF UDP 12201**을 직접 보냅니다.
-팀 Middleware가 쓰는 **GELF HTTP** 입력과는 별개라서 따로 만들어야 합니다.
+시나리오 1 탐지 기록은 **Middleware를 거쳐** Graylog로 들어갑니다. 시나리오 2와 같은 경로라서, [시나리오 2 가이드](../scenario2-middleware/SCENARIO2_SETUP_GUIDE.md)대로 이미 설정한 PC라면 추가 작업이 없습니다.
 
-> 같은 12201이어도 충돌하지 않습니다. Middleware는 **TCP** 12201(GELF HTTP)을 쓰고
-> ([시나리오 2 가이드 2-1](../scenario2-middleware/SCENARIO2_SETUP_GUIDE.md#2-1-gelf-http-인풋-생성),
-> [시나리오 2 README](../scenario2-middleware/README.md)의 `http://host.docker.internal:12201/gelf`),
-> 시나리오 1은 **UDP** 12201을 씁니다. 포트 번호는 TCP와 UDP가 따로라서 두 입력을 함께 켜 둘 수 있습니다.
+1. Middleware 컨테이너가 실행 중인지 확인합니다(`scenario2-middleware` 폴더에서 `docker compose ps`).
+2. Graylog → System → Inputs에 **GELF HTTP**(TCP 12201) 입력이 RUNNING인지 확인합니다. 없으면 [시나리오 2 가이드 2-1](../scenario2-middleware/SCENARIO2_SETUP_GUIDE.md#2-1-gelf-http-인풋-생성)대로 만듭니다.
+3. 루트 `.env`의 `MIDDLEWARE_INGEST_URL`·`MIDDLEWARE_API_KEY`가 Middleware 설정과 같은지 확인합니다.
 
-1. Graylog → System → Inputs → 드롭다운에서 **GELF UDP** → Launch new input
-2. Title `S1 GELF UDP`, Port `12201`, Global 체크 → Save
-3. Graylog 컨테이너가 UDP 포트를 열어 두었는지 확인합니다.
-   docker 설정의 포트에 `12201:12201/udp`가 있어야 합니다. 없으면 추가 후 컨테이너를 다시 만듭니다.
+✅ **확인**: 미끼 로그인 후 Graylog에서 `event_type:HONEYTOKEN_ACCESS AND source:security-middleware` 검색 시 기록이 보이고, `broker_topic`이 `security-logs.priority`(허니토큰 우선 차선)
 
-✅ **확인**: Inputs 목록에서 `S1 GELF UDP`가 RUNNING
-
-> **Graylog가 다른 PC에 있을 때**: 웹앱은 GELF UDP를 기본으로 **자기 PC(`localhost`)의 Graylog**로만 보냅니다.
-> Middleware의 다중 전송(`GRAYLOG_GELF_URL`)은 Middleware 경로에만 적용되므로, 시나리오 1 탐지를 다른 PC의 Graylog에서 하려면
-> 웹앱을 켜기 전에 PowerShell에서 `$env:GRAYLOG_HOST = "<Graylog PC IP>"`를 입력하고 같은 창에서 `.\start-enginesquare.ps1`을 실행합니다.
-> (`start-enginesquare.ps1`은 `.env`에 `MIDDLEWARE_*`·`ENGINESQUARE_*`만 허용하므로 `GRAYLOG_HOST`는 `.env`가 아니라 PowerShell에 입력합니다.)
+> GELF HTTP 입력이 없으면 Middleware 로그에 `Graylog delivery failed ... Server disconnected without sending a response`가 30초마다 반복됩니다. 입력을 만들면 Middleware가 붙잡아 둔 기록을 자동으로 다시 보냅니다.
+>
+> 웹앱은 예전 방식대로 GELF UDP 12201로도 같은 기록을 보내지만, 탐지 규칙은 Middleware 기록만 보므로 **UDP 입력은 필요 없습니다.** Graylog가 다른 PC라면 Middleware의 `GRAYLOG_GELF_URL`(시나리오 2 `.env`)만 맞추면 됩니다.
 
 ### 2단계. Graylog 이벤트·알림 가져오기
 
@@ -55,7 +48,10 @@ Kali → 5001 로그인에 미끼 계정 입력
 2. System → Configurations → **URL Whitelist** → `http://host.docker.internal:5678/webhook/honeytoken` 추가(Exact match)
 
 콘텐츠 팩이 만드는 것:
-- 이벤트 정의 `S1 Honeytoken used`: Filter `rule:honeytoken`, 10초 범위 / 10초마다, 필드 `src_ip`·`token_id`·`placement`·`username`
+- 이벤트 정의 `S1 Honeytoken used`: Filter `event_type:HONEYTOKEN_ACCESS AND source:security-middleware`, 10초 범위 / 10초마다, 필드 `src_ip`(=`${source.client_ip}`)·`raw_payload`(=`${source.raw_payload}`)
+- n8n이 `raw_payload`(JSON 글자)를 풀어 미끼 번호(`decoy_id`)를 꺼냅니다
+
+> 예전 콘텐츠 팩(rev 1, `rule:honeytoken`)을 설치했던 PC는 Alerts → Event Definitions에서 `S1 Honeytoken used`의 검색어와 필드를 위처럼 바꾸고, Notifications의 본문을 콘텐츠 팩과 같게 바꿉니다.
 - 알림 `S1 n8n Webhook (honeytoken)`: POST `http://host.docker.internal:5678/webhook/honeytoken`
 
 ✅ **확인**: Alerts → Event Definitions에 `S1 Honeytoken used`, Notifications에 `S1 n8n Webhook (honeytoken)`
@@ -172,13 +168,14 @@ curl -i -X POST "http://$GW:5001/login" -d "username=backup_admin&password=1234"
 | 증상 | 원인·조치 |
 |---|---|
 | Kali에서 5001 접속 안 됨 | 최신 main을 받았는지 확인(웹앱이 `0.0.0.0`으로 실행되는 버전). Windows 방화벽이 5001을 막는지 확인 |
-| 미끼 로그인 후 아무 반응 없음 | Graylog에서 `rule:honeytoken` 검색. 로그가 없으면 1단계(GELF UDP 입력·`12201/udp` 포트) 확인 |
+| 미끼 로그인 후 아무 반응 없음 | Graylog에서 `event_type:HONEYTOKEN_ACCESS AND source:security-middleware` 검색. 없으면 Middleware 로그(`docker compose logs --tail 40`)와 1단계(GELF HTTP 입력) 확인 |
+| Discord에 `미끼 미상` | 이벤트 정의 Fields에 `raw_payload`(`${source.raw_payload}`)가 빠짐 |
+| n8n을 고쳤는데 예전대로 동작 | Publish된 워크플로는 수정 후 **다시 Publish**해야 반영됨 |
 | Graylog에 로그는 있는데 n8n 미실행 | 2단계 URL 허용 목록, 이벤트 정의의 알림 연결 확인 |
 | `webhook "POST honeytoken" is not registered` | n8n 워크플로가 Publish되지 않음 |
 | n8n에서 `access to env vars denied` | IP 차단 노드 URL에 `$env`가 남음 → 파일을 다시 가져오거나 고정 주소로 교체 |
 | Discord 알림만 안 옴 | 이미 차단된 IP(`changed=false`) → 차단 해제 후 재시도. 또는 Discord 주소 확인 |
 | 내 PC 브라우저로 미끼 로그인했는데 접속이 막히지 않음 | 정상입니다. 관리자용 `127.0.0.1`은 차단 대상에서 제외됩니다. 탐지·티켓·알림은 동작하며, 차단 확인은 Kali처럼 다른 IP에서 합니다 |
-| Graylog가 다른 PC인데 시나리오 1만 탐지 안 됨 | 웹앱의 UDP는 기본으로 `localhost`로 갑니다 → 1단계 아래 안내대로 `GRAYLOG_HOST` 설정 |
 | 로그 전송 실패 여부 | 화면에는 표시하지 않고 웹앱 서버 로그에 `Scenario 1 ... failed` 경고로 남음 |
 
 ## 자주 묻는 질문
@@ -186,7 +183,7 @@ curl -i -X POST "http://$GW:5001/login" -d "username=backup_admin&password=1234"
 - **공격자가 미끼의 랜덤 비밀번호를 맞히면?** 로그인되지 않습니다. 미끼 계정은 비밀번호 확인 전에 걸러서 항상 실패 화면을 보내고 탐지합니다. 억지로 세션을 만들어도 다음 요청에서 로그아웃되고, 첫 시도에 차단되므로 대입 공격도 이어갈 수 없습니다.
 - **정상 사용자가 실수로 미끼를 쓰면?** 미끼 이름은 실제 사용자와 겹치지 않게 정하고 공개하지 않습니다. 오탐이 사실상 없다는 것이 허니토큰의 장점입니다.
 - **왜 Wazuh는 쓰지 않나요?** 미끼는 한 번 사용만으로 공격이 확정되어 상관 분석이 필요 없습니다. Graylog → n8n 한 경로로 대응하며, Wazuh 이중화는 확장 과제입니다.
-- **왜 Graylog로 UDP를 쓰나요? 팀은 미들웨어(TCP)를 쓰는데요?** 시나리오 1을 처음 단독으로 만들 때 쓰던 Graylog GELF UDP 입력을 그대로 이어 썼습니다. UDP는 보내고 끝이라 Graylog가 느리거나 꺼져 있어도 로그인 응답이 늦어지지 않는 장점이 있고, 도착 확인이 없어 유실될 수 있는 게 한계입니다. 웹앱은 같은 기록을 미들웨어로도 보내고 있어서, Graylog 탐지를 미들웨어 경유(TCP, WAL 버퍼링·허니토큰 우선 처리)로 통일하는 것이 개선 방향입니다.
+- **왜 Middleware를 거치나요?** 팀 구조(서비스 → Middleware → Graylog)에 맞추고, Middleware의 장점을 시나리오 1도 쓰기 위해서입니다. Graylog가 잠시 꺼져 있어도 Middleware가 기록을 디스크에 쥐고 있다가 다시 보내 유실이 없고, 허니토큰은 우선 차선으로 처리돼 로그가 몰려도 탐지가 밀리지 않습니다. 대신 **Middleware가 꺼져 있으면 시나리오 1 탐지도 멈춥니다.** 처음에는 Middleware 연동 전에 만들어 Graylog로 직접(UDP) 보냈고, 지금은 Middleware 경로로 바꿨습니다.
 - **`changed`는 무엇인가요?** 공용 API가 "이번에 이 IP를 **새로** 차단했는지"를 알려 주는 값입니다. 처음 차단하면 `true`, 이미 차단돼 있던 IP면 `false`입니다. n8n은 `true`일 때만 Discord로 알려서, 공격자가 여러 번 시도해도 알림은 한 번만 갑니다. 관리자가 차단을 해제한 뒤 다시 걸리면 다시 `true`가 됩니다.
 - **탐지 건수가 시도 횟수와 다르면?** 탐지 건수는 티켓별 `occurrence_count` 합계입니다. Graylog가 10초 단위로 검사하므로 짧은 시간의 여러 시도는 한 번으로 묶일 수 있습니다.
 

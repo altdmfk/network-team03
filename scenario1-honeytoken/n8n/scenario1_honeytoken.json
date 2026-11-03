@@ -52,7 +52,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 시나리오1: Graylog 허니토큰 이벤트 → IP 차단 요청 데이터\nconst b = $json.body ?? $json;\nif (!b.src_ip) return [];   // IP가 없으면 차단할 수 없으니 중단\n\nreturn [{ json: {\n  ip: b.src_ip,\n  src_ip: b.src_ip,\n  token_id: b.token_id,\n  placement: b.placement,\n  username: b.username,\n  detected_at: b.timestamp,\n  reason: `허니토큰 ${b.token_id}(${b.username}) 사용 — 즉시 차단`,\n  severity: 'Critical',\n  student: 'team3-s1',\n}}];"
+        "jsCode": "// 시나리오1: Graylog 허니토큰 이벤트 → IP 차단 요청 데이터\n// 미들웨어 경유(src_ip + raw_payload)와 예전 직접 전송(src_ip + token_id) 둘 다 받는다\nconst b = $json.body ?? $json;\nconst ip = b.src_ip || b.client_ip;\nif (!ip) return [];   // IP가 없으면 차단할 수 없으니 중단\n\n// raw_payload는 객체 또는 JSON 글자로 올 수 있다 → 풀어서 미끼 번호를 꺼낸다\nlet p = b.raw_payload ?? {};\nif (typeof p === 'string') { try { p = JSON.parse(p); } catch (e) { p = {}; } }\nif (!p || typeof p !== 'object') p = {};\n\nconst tokenId = b.token_id || p.decoy_id || '미상';\nconst placement = b.placement || p.decoy_placement || 'users_table';\nconst username = b.username || '';\n\nreturn [{ json: {\n  ip, src_ip: ip,\n  token_id: tokenId,\n  placement,\n  username,\n  detected_at: b.timestamp,\n  reason: `허니토큰 ${tokenId} 사용 — 즉시 차단`,\n  severity: 'Critical',\n  student: 'team3-s1',\n}}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -89,7 +89,7 @@
             {
               "id": "1a50a29b-437a-4500-a261-f5863615e218",
               "name": "text",
-              "value": "=   🍯 [허니토큰 탐지] {{ $json.incident_id }} / 미끼 {{ $('판정(잠금)').item.json.token_id }}({{ $('판정(잠금)').item.json.username }}) 사용 → 공격 IP {{ $json.ip }} 즉시 차단 / 심은 위치: {{ $('판정(잠금)').item.json.placement }} / 탐지 시각: {{ $('판정(잠금)').item.json.detected_at }}",
+              "value": "=   🍯 [허니토큰 탐지] {{ $json.incident_id }} / 미끼 {{ $('판정(잠금)').item.json.token_id }}{{ $('판정(잠금)').item.json.username ? '(' + $('판정(잠금)').item.json.username + ')' : '' }} 사용 → 공격 IP {{ $json.ip }} 즉시 차단 / 심은 위치: {{ $('판정(잠금)').item.json.placement }} / 탐지 시각: {{ $('판정(잠금)').item.json.detected_at }}",
               "type": "string"
             }
           ]
