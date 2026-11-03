@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 import threading
@@ -50,6 +51,21 @@ class PerClientRateLimiter:
         self._lock = threading.Lock()
         self._last_cleanup = time.monotonic()
 
+    @staticmethod
+    def _to_bucket_key(identity: str) -> str:
+        """
+        Derives a secure bucket identifier from client identity.
+        Ensures raw API keys are never stored in memory or rate limiter buckets.
+        Returns a SHA-256 hex digest or 'ip:<addr>' fallback.
+        """
+        if not identity:
+            return "ip:127.0.0.1"
+        if identity.startswith("ip:"):
+            return identity
+        if len(identity) == 64 and all(c in "0123456789abcdefABCDEF" for c in identity):
+            return identity.lower()
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
     def check_and_consume(
         self,
         identity: str,
@@ -68,16 +84,17 @@ class PerClientRateLimiter:
             return True, 0.0
 
         current_time = now if now is not None else time.monotonic()
+        bucket_key = self._to_bucket_key(identity)
 
         with self._lock:
             # Periodic cleanup of idle identities
             if current_time - self._last_cleanup > self.cleanup_interval_seconds:
                 self._prune_idle_clients(current_time)
 
-            bucket = self._buckets.get(identity)
+            bucket = self._buckets.get(bucket_key)
             if bucket is None:
                 bucket = ClientBucket(self.capacity, current_time)
-                self._buckets[identity] = bucket
+                self._buckets[bucket_key] = bucket
             else:
                 elapsed = max(0.0, current_time - bucket.last_refill)
                 bucket.tokens = min(self.capacity, bucket.tokens + elapsed * self.rate_per_sec)

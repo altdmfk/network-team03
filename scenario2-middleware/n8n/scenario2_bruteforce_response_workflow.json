@@ -35,7 +35,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:5000/automation/revoke-key",
+        "url": "={{ $env.AUTOMATION_WEBHOOK_BASE_URL || 'http://host.docker.internal:5000' }}/automation/revoke-key",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

@@ -335,11 +335,51 @@ class SQLiteBrokerStorage:
     def __init__(
         self,
         db_path: str,
-        timeout: float = 15.0,
+        timeout: Optional[float] = None,
         default_partitions: int = DEFAULT_NUM_PARTITIONS,
+        cache_size_kb: Optional[int] = None,
+        busy_timeout_ms: Optional[int] = None,
     ) -> None:
         self.db_path = os.path.abspath(db_path)
-        self.timeout = float(timeout)
+
+        # Resolve SQLite PRAGMA busy_timeout_ms
+        if busy_timeout_ms is not None:
+            self.busy_timeout_ms = int(busy_timeout_ms)
+        elif timeout is not None:
+            self.busy_timeout_ms = int(float(timeout) * 1000)
+        elif "SQLITE_BUSY_TIMEOUT_MS" in os.environ:
+            self.busy_timeout_ms = int(os.environ["SQLITE_BUSY_TIMEOUT_MS"])
+        else:
+            try:
+                import config
+
+                self.busy_timeout_ms = int(
+                    getattr(config, "SQLITE_BUSY_TIMEOUT_MS", 15000)
+                )
+            except Exception:
+                self.busy_timeout_ms = 15000
+
+        self.timeout = (
+            float(timeout)
+            if timeout is not None
+            else float(self.busy_timeout_ms / 1000.0)
+        )
+
+        # Resolve SQLite PRAGMA cache_size_kb
+        if cache_size_kb is not None:
+            self.cache_size_kb = int(cache_size_kb)
+        elif "SQLITE_CACHE_SIZE_KB" in os.environ:
+            self.cache_size_kb = int(os.environ["SQLITE_CACHE_SIZE_KB"])
+        else:
+            try:
+                import config
+
+                self.cache_size_kb = int(
+                    getattr(config, "SQLITE_CACHE_SIZE_KB", -64000)
+                )
+            except Exception:
+                self.cache_size_kb = -64000
+
         self.default_partitions = int(default_partitions)
         self._local = threading.local()
         self._lock = threading.Lock()
@@ -362,9 +402,9 @@ class SQLiteBrokerStorage:
                 check_same_thread=True,
             )
             # 1. Set busy_timeout FIRST so any subsequent PRAGMA or lock waits instead of failing
-            conn.execute(f"PRAGMA busy_timeout = {int(self.timeout * 1000)};")
+            conn.execute(f"PRAGMA busy_timeout = {int(self.busy_timeout_ms)};")
             conn.execute("PRAGMA synchronous = NORMAL;")
-            conn.execute("PRAGMA cache_size = -64000;")  # 64MB cache
+            conn.execute(f"PRAGMA cache_size = {int(self.cache_size_kb)};")
             conn.execute("PRAGMA temp_store = MEMORY;")
 
             # 2. Check journal mode and convert to WAL only if not already WAL
@@ -974,8 +1014,13 @@ class LightweightProducer:
             )
         )
 
+        cache_size_kb = cfg.get("sqlite.cache_size_kb", cfg.get("sqlite_cache_size_kb"))
+        busy_timeout_ms = cfg.get("sqlite.busy_timeout_ms", cfg.get("sqlite_busy_timeout_ms"))
         self._storage = storage or SQLiteBrokerStorage(
-            self.db_path, default_partitions=self.num_partitions
+            self.db_path,
+            default_partitions=self.num_partitions,
+            cache_size_kb=int(cache_size_kb) if cache_size_kb is not None else None,
+            busy_timeout_ms=int(busy_timeout_ms) if busy_timeout_ms is not None else None,
         )
 
         self._queue: queue.Queue[
@@ -1360,8 +1405,13 @@ class LightweightConsumer:
             )
         )
 
+        cache_size_kb = cfg.get("sqlite.cache_size_kb", cfg.get("sqlite_cache_size_kb"))
+        busy_timeout_ms = cfg.get("sqlite.busy_timeout_ms", cfg.get("sqlite_busy_timeout_ms"))
         self._storage = storage or SQLiteBrokerStorage(
-            self.db_path, default_partitions=self.num_partitions
+            self.db_path,
+            default_partitions=self.num_partitions,
+            cache_size_kb=int(cache_size_kb) if cache_size_kb is not None else None,
+            busy_timeout_ms=int(busy_timeout_ms) if busy_timeout_ms is not None else None,
         )
 
         self._assigned: Set[Tuple[str, int]] = set()
@@ -1718,7 +1768,13 @@ class LightweightAdminClient:
             or db_path
             or resolve_default_broker_db_path()
         )
-        self._storage = storage or SQLiteBrokerStorage(str(resolved_db))
+        cache_size_kb = cfg.get("sqlite.cache_size_kb", cfg.get("sqlite_cache_size_kb"))
+        busy_timeout_ms = cfg.get("sqlite.busy_timeout_ms", cfg.get("sqlite_busy_timeout_ms"))
+        self._storage = storage or SQLiteBrokerStorage(
+            str(resolved_db),
+            cache_size_kb=int(cache_size_kb) if cache_size_kb is not None else None,
+            busy_timeout_ms=int(busy_timeout_ms) if busy_timeout_ms is not None else None,
+        )
 
     def list_topics(self, timeout: Optional[float] = None) -> ClusterMetadata:
         """Returns metadata for all registered topics."""

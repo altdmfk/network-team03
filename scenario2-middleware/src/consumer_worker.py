@@ -35,6 +35,7 @@ from config import (
     DEAD_LETTER_FILE,
     DLQ_BACKEND,
     DRY_RUN_GRAYLOG_MOCK,
+    ENABLE_TIERED_RETRY,
     GELF_HOST,
     GRAYLOG_GELF_URL,
     GRAYLOG_GELF_URLS,
@@ -55,6 +56,7 @@ from middleware.dlq_publisher import (
     DeadLetterSink,
 )
 from middleware.dlq_store import JsonlDeadLetterStore
+from middleware.retry_topic_consumer import RetryTopicConsumer
 from middleware.gelf_transformer import (
     GelfTransformer,
     serialize_ndjson_batch,
@@ -113,6 +115,7 @@ class GraylogConsumerWorker:
         metrics_port: Optional[int] = None,
         enable_metrics_server: bool = True,
         broker_db_path: Optional[str] = None,
+        enable_tiered_retry: Optional[bool] = None,
     ) -> None:
         self.running = True
         self._stop_after_current_batch = False
@@ -121,6 +124,13 @@ class GraylogConsumerWorker:
         self._prev_sigint_handler: Any = None
         self._prev_sigterm_handler: Any = None
         self._signals_installed = False
+        self.enable_tiered_retry: bool = (
+            enable_tiered_retry
+            if enable_tiered_retry is not None
+            else getattr(SETTINGS, "enable_tiered_retry", ENABLE_TIERED_RETRY)
+        )
+        self.retry_consumer: Optional[RetryTopicConsumer] = None
+        self._retry_consumer_thread: Optional[threading.Thread] = None
         self.broker_db_path: str = str(
             broker_db_path
             or getattr(SETTINGS, "broker_db_path", BROKER_DB_PATH)
@@ -188,6 +198,7 @@ class GraylogConsumerWorker:
                 sleep_fn=lambda s: time.sleep(s),
                 jitter_fn=lambda a, b: random.uniform(a, b),
                 split_post=getattr(SETTINGS, "gelf_split_post", False),
+                split_max_workers=getattr(SETTINGS, "gelf_split_max_workers", 20),
             )
         )
         self.offset_committer: ExplicitOffsetCommitter = (
@@ -329,12 +340,83 @@ class GraylogConsumerWorker:
                 self._metrics_server = None
                 self._metrics_thread = None
 
+    def start_retry_consumer(self) -> bool:
+        """
+        Starts RetryTopicConsumer in a managed background thread to consume
+        from tiered retry topics (`security-logs.retry.1m`, `security-logs.retry.10m`).
+        """
+        if not self.enable_tiered_retry:
+            return False
+        if self._retry_consumer_thread is not None and self._retry_consumer_thread.is_alive():
+            return True
+
+        # Do not spin up background broker polling if consumer was replaced with a test double
+        if self.retry_consumer is None and self.consumer is not None and (
+            type(self.consumer).__name__.startswith(("Fake", "Mock"))
+            or getattr(self.consumer, "_is_fake", False)
+        ):
+            logger.info("Skipping background RetryTopicConsumer for fake/mock consumer.")
+            return False
+
+        primary_url, _ = self._resolve_gelf_urls()
+        if self.retry_consumer is None:
+            self.retry_consumer = RetryTopicConsumer(
+                metrics_store=self.metrics,
+                broker_db_path=self.broker_db_path,
+                num_partitions=BROKER_PARTITIONS,
+                dlq_topic=BROKER_DLQ_TOPIC,
+                poison_topic=BROKER_POISON_TOPIC,
+                gelf_url=primary_url,
+                http_client=self.http_client,
+            )
+
+        def _run_retry_loop() -> None:
+            logger.info("Managed background RetryTopicConsumer thread started.")
+            try:
+                while self.running and self.retry_consumer.running:
+                    self.retry_consumer.poll_and_process(timeout=0.2)
+            except Exception as exc:
+                logger.warning("RetryTopicConsumer background loop error: %s", exc)
+            finally:
+                logger.info("Managed background RetryTopicConsumer thread stopped.")
+
+        self._retry_consumer_thread = threading.Thread(
+            target=_run_retry_loop,
+            name="retry-topic-consumer",
+            daemon=True,
+        )
+        self._retry_consumer_thread.start()
+        return True
+
+    def stop_retry_consumer(self) -> None:
+        """Gracefully stops the managed background RetryTopicConsumer and joins its thread."""
+        if self.retry_consumer is not None:
+            try:
+                self.retry_consumer.stop()
+            except Exception as exc:
+                logger.warning("Error stopping retry consumer: %s", exc)
+
+        if self._retry_consumer_thread is not None:
+            try:
+                self._retry_consumer_thread.join(timeout=3.0)
+            except Exception as exc:
+                logger.warning("Error joining retry consumer thread: %s", exc)
+            self._retry_consumer_thread = None
+
+        if self.retry_consumer is not None:
+            try:
+                self.retry_consumer.close()
+            except Exception as exc:
+                logger.warning("Error closing retry consumer: %s", exc)
+            self.retry_consumer = None
+
     def close(self) -> None:
         """Deterministically releases HTTP client, broker consumer, metrics server, and SQLite connections."""
         if self._closed:
             return
         self._closed = True
         self.running = False
+        self.stop_retry_consumer()
         self.stop_metrics_server()
         self.offset_committer.clear_in_flight_batch()
         logger.info("Closing HTTP client, broker consumer, and metrics store...")
@@ -415,6 +497,11 @@ class GraylogConsumerWorker:
         self._shutdown_requested = True
         self._last_signal = signum if isinstance(signum, int) else None
         self.running = False
+        if self.retry_consumer is not None:
+            try:
+                self.retry_consumer.stop()
+            except Exception:
+                pass
         sig_name = (
             signal.Signals(signum).name
             if isinstance(signum, int) and signum in signal.Signals._value2member_map_
@@ -873,6 +960,8 @@ class GraylogConsumerWorker:
         self.install_signal_handlers()
         if self.enable_metrics_server:
             self.start_metrics_server()
+        if self.enable_tiered_retry:
+            self.start_retry_consumer()
         if self.consumer is None:
             self.consumer = self._setup_consumer()
         try:
