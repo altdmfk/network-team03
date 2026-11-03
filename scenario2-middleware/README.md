@@ -188,7 +188,7 @@ flowchart LR
 
 | 시나리오 | 실행 명령어 | 실측 결과 |
 | :--- | :--- | :--- |
-| 미들웨어 유무(A/B) 공정 비교 | `python simulators/compare_middleware.py --count 1000 --concurrency 100` | 하위 지연 50ms 발생 시 직접 전송 대조군은 클라이언트가 6.35초(157 req/s) 동안 블로킹되나, 미들웨어 경유군은 2.99초(335 logs/s) 만에 조기 반환(유실률 0.0%). 벌크 배치 수집(7,600~11,000 logs/s) 후 초당 500건으로 엄격히 평탄화 |
+| 미들웨어 유무(A/B) 실측 비교 | `python simulators/compare_middleware.py --count 1000 --concurrency 100` | 하위 지연 50ms 발생 시 직접 전송 대조군은 클라이언트가 6.35초(157 req/s) 동안 블로킹되나, 미들웨어 경유군은 2.99초(335 logs/s) 만에 조기 반환(유실률 0.0%). 벌크 배치 수집(7,600~11,000 logs/s) 후 초당 500건으로 엄격히 평탄화 |
 | 2만 건 스파이크 무손실 검증 | `python simulators/spike_test_demo.py --spike-count 20000` | 다중 키 배치 수집으로 4.5초 만에 20,004건 인입(집계 버스트 4,448 logs/s). 최대 18,501건 WAL 디스크 버퍼링 후 초당 500건 상한으로 37.4초 동안 드레인 완료(유실 0건) |
 | 연속 고부하 안정성 검증 | `python simulators/load_test_20k.py` | 20,000건 연속 2회(총 40,000건) 배치 인입 시 ReadError 0건. 회차당 8.7~9.5초 소요 (평균 2,100~2,280 logs/s) |
 | 웹앱 공격 탐지 및 자동 차단 | `python simulators/run_scenarios.py -s 1` | 비허용 IP 접근 시 HTTP 403 응답 및 인시던트 티켓 발급. SOAR 웹훅 연동으로 공격자 IP 자동 차단 및 침해 로그 보존 |

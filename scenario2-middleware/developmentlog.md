@@ -80,7 +80,7 @@ SQLite WAL 기반 공유 메트릭 스토어([`SharedMetricsStore`](file:///c:/U
 
 백오프 진입 시 할당된 파티션을 `consumer.pause()`로 정지하고, 정지 상태에서 `poll(0)`을 호출하여 메시지 디큐 없이 세션 하트비트만 유지하도록 설계했다. 전송이 정상화되면 `resume()`으로 수집을 재개한다. 또한 `cooperative-sticky` 리밸런스 프로토콜에 맞춰 `on_revoke` 콜백에서는 미완료 배치를 커밋하지 않고 인플라이트 버퍼를 안전하게 비우며, `on_lost` 콜백에서는 소유권 상실에 따라 오프셋 커밋 없이 상태를 폐기하도록 구현했다.
 
-하위 시스템 장애와 컨슈머 그룹 리밸런스 과정에서도 오프셋 오커밋과 메시지 유실을 완벽히 방지했다.
+하위 시스템 장애와 컨슈머 그룹 리밸런스 과정에서도 오프셋 오커밋과 메시지 유실을 방지했다.
 
 ---
 
@@ -138,7 +138,7 @@ SQLite WAL 기반 공유 메트릭 스토어([`SharedMetricsStore`](file:///c:/U
 
 2만 건 연속 부하 테스트 중 인제스터 응답 지연과 클라이언트 `ReadError`가 간헐적으로 발생했다. 프로파일링 결과 FastAPI 이벤트 루프 스레드가 호출하는 [`LightweightProducer.produce()`](file:///c:/Users/user/Desktop/task/netword-team03/scenario2-middleware/src/middleware/lightweight_broker.py) 핫패스 내에서 미소비 래그 검사를 위한 `get_total_unconsumed_lag()`와 토픽 파티션 수 확인을 위한 `_get_num_partitions()` 등 2건의 동기 SQLite 쿼리가 매 로그마다 실행되고 있었다. 백그라운드 쓰기 스레드가 디스크 커밋을 위해 `BEGIN IMMEDIATE` 트랜잭션 락을 점유하는 동안 이벤트 루프 스레드가 락 대기(`busy_timeout=5.0s`)에 진입하면서 이벤트 루프 전체가 블로킹되는 치명적인 병목이었다.
 
-`produce()` 경로의 동기 DB 조회를 완전히 제거하고 인메모리 캐시(`get_cached_lag()`)만 참조하도록 구조를 전환했다. 미소비 래그 갱신은 FastAPI 수명주기(`lifespan`)에 등록된 백그라운드 루프(`_broker_lag_refresh_loop`)가 `asyncio.to_thread`를 통해 1초 주기로 워커 스레드에서 비동기 갱신하도록 분리했다. 토픽별 파티션 수 역시 런타임 불변 속성이므로 `_partition_count_cache`에 최초 1회만 조회 후 캐싱하여 이후 쿼리를 0회로 만들었다.
+`produce()` 경로의 동기 DB 조회를 제거하고 인메모리 캐시(`get_cached_lag()`)만 참조하도록 구조를 전환했다. 미소비 래그 갱신은 FastAPI 수명주기(`lifespan`)에 등록된 백그라운드 루프(`_broker_lag_refresh_loop`)가 `asyncio.to_thread`를 통해 1초 주기로 워커 스레드에서 비동기 갱신하도록 분리했다. 토픽별 파티션 수 역시 런타임 불변 속성이므로 `_partition_count_cache`에 최초 1회만 조회 후 캐싱하여 이후 쿼리를 0회로 만들었다.
 
 핫패스의 동기 DB 쿼리를 0회로 제거함으로써 20,000건 연속 2회(총 40,000건) 부하 테스트([`simulators/load_test_20k.py`](file:///c:/Users/user/Desktop/task/netword-team03/scenario2-middleware/simulators/load_test_20k.py))에서 `ReadError` 0건을 달성하고 회차당 8.7~9.5초(2,100~2,280 logs/s)의 초고속 수집 성능을 입증했다.
 
@@ -162,7 +162,7 @@ SQLite WAL 기반 공유 메트릭 스토어([`SharedMetricsStore`](file:///c:/U
 
 동일 IP에서 비인가 API 키 반복 호출(HTTP 401) 또는 비허용 IP 접근이 발생하면 미들웨어가 해당 보안 로그를 무손실 버퍼링하여 Graylog로 전달한다. Graylog의 집계 규칙이 1분 내 5회 이상 실패를 탐지하면 n8n 웹훅을 호출하고, n8n 워크플로우가 웹 애플리케이션의 차단 엔드포인트(`POST /automation/revoke-key`)를 트리거하여 MySQL `blocked_ips` 테이블에 공격자 IP를 즉시 등록한다.
 
-후속 유입되는 모든 공격 요청은 웹 애플리케이션 인바운드 단에서 HTTP 403 Forbidden으로 즉각 차단되며, 관제 대시보드에 인시던트 티켓이 발급되는 전체 방어 파이프라인을 시뮬레이터([`demo_bruteforce_attack.py`](file:///c:/Users/user/Desktop/task/netword-team03/scenario2-middleware/simulators/demo_bruteforce_attack.py))로 완벽히 검증했다.
+후속 유입되는 모든 공격 요청은 웹 애플리케이션 인바운드 단에서 HTTP 403 Forbidden으로 즉각 차단되며, 관제 대시보드에 인시던트 티켓이 발급되는 전체 방어 파이프라인을 시뮬레이터([`demo_bruteforce_attack.py`](file:///c:/Users/user/Desktop/task/netword-team03/scenario2-middleware/simulators/demo_bruteforce_attack.py))로 검증했다.
 
 ---
 
@@ -186,12 +186,12 @@ SQLite WAL 기반 공유 메트릭 스토어([`SharedMetricsStore`](file:///c:/U
 
 ---
 
-## 19. 고가용성·보안 아키텍처 및 공정 벤치마크 통합 리팩토링 (2026)
+## 19. 고가용성·보안 아키텍처 및 벤치마크 통합 리팩토링 (2026)
 
-파이프라인의 런타임 안정성, 인메모리 보안, 운영 매개변수 외재화 및 벤치마크 공정성을 전면 개편했다.
+파이프라인의 런타임 안정성, 인메모리 보안, 운영 매개변수 외재화 및 벤치마크 신뢰도를 전면 개편했다.
 
 스토리지 쓰기 헬스체크의 동기 블로킹 문제를 해소하기 위해 `/v1/health`의 SQLite WAL 프로브를 `await asyncio.to_thread(_probe_sqlite_storage, ...)`로 작업 스레드에 위임하고 0.3초 타임아웃 가드를 배치했다. 이를 통해 DB 락 경합 시에도 FastAPI 이벤트 루프가 멈추지 않도록 조치했다. 또한 인메모리 보안을 위해 레이트 리미터 버킷 키에 원문 API 키 대신 SHA-256 해시값을 저장하여 메모리 덤프나 로그를 통한 자격증명 노출 위험을 원천 차단했다.
 
 상용 Graylog 병렬 분할 전송 모드에서 발생하던 불필요한 중복 전송 문제를 해결하기 위해 `pending_indices` 기반 선별 재시도 메커니즘을 도입했다. Pydantic 스키마 검증기에서 전역 설정값을 변이하던 안티패턴을 제거하고 상태 비저장 검증 컨텍스트를 적용했다. 계층형 재시도 컨슈머(`RetryTopicConsumer`)와 DLQ 재발행(`replay()`)을 컨슈머 워커 백그라운드 태스크 및 관리자 API로 완전 통합했다.
 
-운영 편의성을 위해 SQLite PRAGMA 설정, 분할 스레드 수, SOAR 차단 웹훅 URL을 환경변수로 외재화했다. `compare_middleware.py`의 인위적 제약을 제거하고 대칭적 커넥션 풀(Keep-Alive=100, Timeout=5.0s, Concurrency=300)과 다운스트림 지연 주입(50ms)을 적용해 공정한 2차원 벤치마크 체계를 확립했다. 모든 시뮬레이터와 클라이언트에 HMAC-SHA256 표준 서명 검증을 기본 적용하고, 모의 Graylog 서버에 수신 통계 및 지연 주입 API를 추가하여 엄격한 검증 기반을 완성했다.
+운영 편의성을 위해 SQLite PRAGMA 설정, 분할 스레드 수, SOAR 차단 웹훅 URL을 환경변수로 외재화했다. `compare_middleware.py`의 인위적 제약을 제거하고 대칭적 커넥션 풀(Keep-Alive=100, Timeout=5.0s, Concurrency=300)과 다운스트림 지연 주입(50ms)을 적용해 신뢰성 있는 2차원 벤치마크 체계를 확립했다. 모든 시뮬레이터와 클라이언트에 HMAC-SHA256 표준 서명 검증을 기본 적용하고, 모의 Graylog 서버에 수신 통계 및 지연 주입 API를 추가하여 엄격한 검증 기반을 완성했다.
