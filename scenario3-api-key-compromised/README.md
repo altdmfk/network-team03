@@ -37,12 +37,14 @@ python -m pip install -r requirements.txt -r web-app/requirements.txt
 ```
 
 다른 위치에 저장했다면 `cd` 경로를 바꿉니다. 이미 실행 중인 5000·5001 서버는 먼저 종료합니다.
-실행 창은 켜둡니다. Enter를 누르면 두 서버가 종료됩니다.
+실행 창은 켜둡니다. Enter를 누르면 API·웹앱과 Wazuh 수집기가 종료됩니다.
 `http://127.0.0.1:5000/health`에서 `{"status":"ok"}`를 확인합니다.
 오류가 나면 프로젝트 루트 `.runtime-logs/`의 API·웹앱 로그를 확인합니다.
 
-Wazuh도 실시간 확인하려면 **정상·공격 요청을 보내기 전에** 프로젝트 루트의 별도 PowerShell 창에서
-아래 수집기를 실행해 둡니다. 규칙과 수집 설정은 아래 Wazuh 절을 참고합니다.
+위 통합 실행 파일은 Wazuh 수집기도 함께 실행합니다. Docker의 Wazuh와 규칙·로그 수집 설정은 미리 준비합니다.
+수집기는 새 API 로그만 전달하며 `.runtime-logs/wazuh.out.log`와 `wazuh.err.log`에서 동작을 확인합니다.
+통합 실행 파일 대신 서버를 수동 실행하는 경우에만 **정상·공격 요청 전에** 별도 창에서 아래 수집기를 실행합니다.
+이미 통합 실행 중이면 중복 실행하지 않습니다. 규칙과 수집 설정은 아래 Wazuh 절을 참고합니다.
 
 ```powershell
 python scenario3-api-key-compromised/wazuh/forward_api_logs.py
