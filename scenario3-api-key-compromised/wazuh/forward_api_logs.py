@@ -6,10 +6,17 @@ from pathlib import Path
 
 source = Path(__file__).resolve().parents[2] / 'security_events.jsonl'
 if not source.exists():
-    raise SystemExit('Start the API server first so security_events.jsonl exists.')
+    print('Waiting for the API server to create security_events.jsonl...', flush=True)
+    while not source.exists():
+        time.sleep(0.5)
+    # A newly created file contains only events from this launch.
+    start_at_end = False
+else:
+    start_at_end = True
 print('Forwarding NEW API log lines to Wazuh. Keep this window open; Ctrl+C stops it.')
 with source.open(encoding='utf-8') as stream:
-    stream.seek(0, 2)
+    if start_at_end:
+        stream.seek(0, 2)
     try:
         while True:
             position = stream.tell()

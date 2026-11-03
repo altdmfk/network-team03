@@ -156,8 +156,8 @@ $env:ENGINESQUARE_DB_NAME = "enginesquare"
 
 ## 실행 명령
 
-API와 웹앱을 함께 시작하려면 프로젝트 루트에서 다음 명령을 사용합니다.
-MySQL과 Middleware 등 Docker 서비스는 먼저 실행해 둡니다. 이미 실행 중인 5000·5001 서버는 종료합니다.
+API·웹앱·Wazuh 로그 수집기를 함께 시작하려면 프로젝트 루트에서 다음 명령을 사용합니다.
+MySQL·Middleware·Wazuh 등 Docker 서비스는 먼저 실행해 둡니다. 이미 실행 중인 5000·5001 서버와 별도로 실행한 Wazuh 수집기는 종료합니다.
 
 ```powershell
 .\start-enginesquare.ps1
@@ -178,7 +178,9 @@ Copy-Item .env.example .env
 수동 `python app.py` 실행은 `.env`를 자동으로 읽지 않으므로 아래의 수동 환경변수 설정이 필요합니다.
 
 파일과 현재 창 모두에 `MIDDLEWARE_API_KEY`가 없으면 숨김 입력으로 물어봅니다. 두 서버에 같은 설정을 전달하며,
-로그는 Git 제외 폴더 `.runtime-logs/`에 저장합니다. 실행 창에서 Enter를 누르면 시작한 두 서버를 종료합니다.
+로그는 Git 제외 폴더 `.runtime-logs/`에 저장합니다. Wazuh 수집기의 출력·오류는 `wazuh.out.log`·`wazuh.err.log`에서 확인합니다.
+실행 창에서 Enter를 누르면 시작한 API·웹앱과 Wazuh 수집기를 함께 종료합니다.
+Wazuh는 기존 규칙·로그 수집 설정이 필요하며, 수집기는 실행 이후의 새 API 로그만 전달합니다.
 Middleware 주소가 다르면 `-MiddlewareUrl "http://수집기주소:8000/ingest"`를 지정합니다.
 동시 실행 시 자동 재시작은 끕니다. 웹앱 단독 개발에서 필요하면 `ENGINESQUARE_DEBUG=1`로 설정합니다.
 
