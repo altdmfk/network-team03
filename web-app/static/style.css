@@ -31,10 +31,10 @@ h1 span { display: inline-block; padding: 0 12px; border-radius: 16px; backgroun
 .primary { background: #161616; color: #fff; }
 .secondary { background: rgba(255, 255, 255, .72); }
 
-.scenarios { margin-top: 76px; text-align: left; }
+.scenarios { max-width: 1080px; margin: 76px auto 0; text-align: left; }
 .scenarios h2 { margin: 0 0 5px; font-size: 27px; letter-spacing: -.05em; }
 .scenarios > p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
-.scenario-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.scenario-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .scenario-card { min-height: 145px; padding: 18px; border: 1px solid #e0e4ec; border-radius: 15px; background: rgba(255, 255, 255, .74); cursor: pointer; transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease; }
 .scenario-card:hover { transform: translateY(-2px); }
 .scenario-card.selected { border-color: #151515; background: #151515; color: #fff; }
@@ -87,9 +87,8 @@ input:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px r
 .write-panel textarea { resize: vertical; }
 .write-panel .button { width: max-content; margin-top: 8px; border: 0; cursor: pointer; }
 .dashboard-page { }
-.admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.admin-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
 .admin-grid .write-panel { margin-top: 0; }
-.admin-grid .bait-management-panel { align-self: start; padding: 20px 24px; }
 .bait-management-panel .section-title h2 { margin: 0; }
 .bait-management-panel .admin-help { margin: 6px 0 0; }
 .key-issue-panel .section-title h2 { margin: 0; }
