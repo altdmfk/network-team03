@@ -17,6 +17,11 @@ from middleware.telemetry import (
     record_graylog_delivery_latency,
 )
 
+try:
+    from config import GELF_SPLIT_MAX_WORKERS
+except Exception:
+    GELF_SPLIT_MAX_WORKERS = 20
+
 logger = logging.getLogger("soar.delivery_client")
 
 
@@ -35,12 +40,18 @@ class GraylogDeliveryClient:
         sleep_fn: Optional[Callable[[float], None]] = None,
         jitter_fn: Optional[Callable[[float, float], float]] = None,
         split_post: Optional[bool] = None,
+        split_max_workers: Optional[int] = None,
     ) -> None:
         self._sleep_fn: Callable[[float], None] = sleep_fn or (lambda s: time.sleep(s))
         self._jitter_fn: Callable[[float, float], float] = jitter_fn or (
             lambda a, b: random.uniform(a, b)
         )
         self._split_post = split_post
+        self._split_max_workers: int = (
+            int(split_max_workers)
+            if split_max_workers is not None
+            else GELF_SPLIT_MAX_WORKERS
+        )
 
     def deliver_batch(
         self,
@@ -58,6 +69,7 @@ class GraylogDeliveryClient:
         should_abort_fn: Optional[Callable[[], bool]] = None,
         messages: Optional[List[Any]] = None,
         split_post: Optional[bool] = None,
+        split_max_workers: Optional[int] = None,
     ) -> DeliveryOutcome:
         """
         Ships `gelf_batch` to `gelf_url` over HTTP POST.
@@ -103,6 +115,9 @@ class GraylogDeliveryClient:
         if tp:
             post_kwargs["headers"] = {"traceparent": tp}
 
+        # Track which message indices from gelf_batch remain to be successfully delivered
+        pending_indices: List[int] = list(range(len(gelf_batch)))
+
         try:
             while is_running_fn():
                 if should_abort_fn is not None and should_abort_fn():
@@ -112,59 +127,115 @@ class GraylogDeliveryClient:
                 attempt += 1
                 t0 = time.monotonic()
                 try:
-                    if use_split and len(gelf_batch) > 1:
+                    if use_split:
                         headers = post_kwargs.get("headers")
 
-                        def _send_single(doc: Dict[str, Any]) -> httpx.Response:
-                            return http_client.post(gelf_url, json=doc, headers=headers)
+                        def _send_item(idx: int) -> Tuple[int, Optional[httpx.Response], Optional[Exception]]:
+                            doc = gelf_batch[idx]
+                            try:
+                                resp = http_client.post(gelf_url, json=doc, headers=headers)
+                                return idx, resp, None
+                            except Exception as exc:
+                                return idx, None, exc
 
-                        max_workers = min(20, len(gelf_batch))
-                        with concurrent.futures.ThreadPoolExecutor(
-                            max_workers=max_workers
-                        ) as executor:
-                            futures = [
-                                executor.submit(_send_single, doc) for doc in gelf_batch
-                            ]
-                            responses = [f.result() for f in futures]
-
-                        non_2xx = [
-                            r for r in responses if not (200 <= r.status_code < 300)
-                        ]
-                        if non_2xx:
-                            response = non_2xx[0]
+                        worker_limit = (
+                            int(split_max_workers)
+                            if split_max_workers is not None
+                            else self._split_max_workers
+                        )
+                        max_workers = min(max(1, worker_limit), len(pending_indices))
+                        if max_workers > 1:
+                            with concurrent.futures.ThreadPoolExecutor(
+                                max_workers=max_workers
+                            ) as executor:
+                                futures = [
+                                    executor.submit(_send_item, idx) for idx in pending_indices
+                                ]
+                                results = [f.result() for f in futures]
                         else:
-                            response = responses[0]
+                            results = [_send_item(idx) for idx in pending_indices]
+
+                        failed_indices: List[int] = []
+                        last_failed_resp: Optional[httpx.Response] = None
+                        last_failed_exc: Optional[Exception] = None
+
+                        for idx, resp, exc in results:
+                            if exc is not None:
+                                failed_indices.append(idx)
+                                last_failed_exc = exc
+                            elif resp is not None and (200 <= resp.status_code < 300):
+                                pass  # Item delivered successfully
+                            else:
+                                failed_indices.append(idx)
+                                last_failed_resp = resp
+
+                        pending_indices = failed_indices
+                        latency = max(0.0, time.monotonic() - t0)
+                        record_graylog_delivery_latency(latency)
+
+                        if not pending_indices:
+                            record_delivery_attempt("2xx")
+                            record_end_to_end_latency(messages)
+                            if attempt > 1:
+                                logger.info(
+                                    "Graylog recovered! Batch of %d GELF logs accepted on attempt %d.",
+                                    len(gelf_batch),
+                                    attempt,
+                                    extra={
+                                        "batch_id": batch_id,
+                                        "retry_count": attempt - 1,
+                                        "message_count": len(gelf_batch),
+                                    },
+                                )
+                            return DeliveryOutcome.DELIVERED
+
+                        # Classify failure metrics and error reason for the partial batch
+                        if last_failed_resp is not None:
+                            sc = last_failed_resp.status_code
+                            if 500 <= sc < 600:
+                                record_delivery_attempt("5xx")
+                            elif 400 <= sc < 500:
+                                record_delivery_attempt("4xx")
+                            else:
+                                record_delivery_attempt("error")
+                            error_reason = f"HTTP {sc}: {last_failed_resp.text[:200]}"
+                        elif last_failed_exc is not None:
+                            record_delivery_attempt("error")
+                            error_reason = f"Connection/Timeout error: {last_failed_exc}"
+                        else:
+                            record_delivery_attempt("error")
+                            error_reason = "Partial split delivery failure"
                     else:
                         response = http_client.post(
                             gelf_url,
                             **post_kwargs,
                         )
-                    latency = max(0.0, time.monotonic() - t0)
-                    record_graylog_delivery_latency(latency)
+                        latency = max(0.0, time.monotonic() - t0)
+                        record_graylog_delivery_latency(latency)
 
-                    if 200 <= response.status_code < 300:
-                        record_delivery_attempt("2xx")
-                        record_end_to_end_latency(messages)
-                        if attempt > 1:
-                            logger.info(
-                                "Graylog recovered! Batch of %d GELF logs accepted on attempt %d.",
-                                len(gelf_batch),
-                                attempt,
-                                extra={
-                                    "batch_id": batch_id,
-                                    "retry_count": attempt - 1,
-                                    "message_count": len(gelf_batch),
-                                },
-                            )
-                        return DeliveryOutcome.DELIVERED
+                        if 200 <= response.status_code < 300:
+                            record_delivery_attempt("2xx")
+                            record_end_to_end_latency(messages)
+                            if attempt > 1:
+                                logger.info(
+                                    "Graylog recovered! Batch of %d GELF logs accepted on attempt %d.",
+                                    len(gelf_batch),
+                                    attempt,
+                                    extra={
+                                        "batch_id": batch_id,
+                                        "retry_count": attempt - 1,
+                                        "message_count": len(gelf_batch),
+                                    },
+                                )
+                            return DeliveryOutcome.DELIVERED
 
-                    if 500 <= response.status_code < 600:
-                        record_delivery_attempt("5xx")
-                    elif 400 <= response.status_code < 500:
-                        record_delivery_attempt("4xx")
-                    else:
-                        record_delivery_attempt("error")
-                    error_reason = f"HTTP {response.status_code}: {response.text[:200]}"
+                        if 500 <= response.status_code < 600:
+                            record_delivery_attempt("5xx")
+                        elif 400 <= response.status_code < 500:
+                            record_delivery_attempt("4xx")
+                        else:
+                            record_delivery_attempt("error")
+                        error_reason = f"HTTP {response.status_code}: {response.text[:200]}"
                 except httpx.RequestError as exc:
                     latency = max(0.0, time.monotonic() - t0)
                     record_graylog_delivery_latency(latency)
@@ -172,23 +243,30 @@ class GraylogDeliveryClient:
                     error_reason = f"Connection/Timeout error: {exc}"
 
                 if retry_policy.max_retries > 0 and attempt >= retry_policy.max_retries:
+                    failed_gelf = [gelf_batch[i] for i in pending_indices] if use_split else gelf_batch
+                    failed_msgs = (
+                        [messages[i] for i in pending_indices]
+                        if (use_split and messages is not None)
+                        else messages
+                    )
                     logger.error(
-                        "Exceeded MAX_DELIVERY_RETRIES (%d) due to %s. Persisting batch to Dead Letter store.",
+                        "Exceeded MAX_DELIVERY_RETRIES (%d) due to %s. Persisting %d failed items to Dead Letter store.",
                         retry_policy.max_retries,
                         error_reason,
+                        len(failed_gelf),
                         extra={
                             "batch_id": batch_id,
                             "retry_count": attempt,
-                            "message_count": len(gelf_batch),
+                            "message_count": len(failed_gelf),
                         },
                     )
                     try:
                         try:
                             dlq_res = on_dead_letter(
-                                gelf_batch, messages=messages, reason=error_reason
+                                failed_gelf, messages=failed_msgs, reason=error_reason
                             )
                         except TypeError:
-                            dlq_res = on_dead_letter(gelf_batch)
+                            dlq_res = on_dead_letter(failed_gelf)
                         if dlq_res is False:
                             logger.error(
                                 "Dead letter publish failed (delivery report unconfirmed); aborting batch without commit."
@@ -212,17 +290,19 @@ class GraylogDeliveryClient:
                     attempt, jitter_value=jitter_val
                 )
 
+                pending_count = len(pending_indices) if use_split else len(gelf_batch)
                 logger.warning(
-                    "[BACKPRESSURE HOLD] Graylog delivery failed (attempt=%d, batch_size=%d, reason=%s). "
+                    "[BACKPRESSURE HOLD] Graylog delivery failed (attempt=%d, batch_size=%d, pending=%d, reason=%s). "
                     "Offsets NOT committed. Retrying in %.2fs...",
                     attempt,
                     len(gelf_batch),
+                    pending_count,
                     error_reason,
                     sleep_duration,
                     extra={
                         "batch_id": batch_id,
                         "retry_count": attempt,
-                        "message_count": len(gelf_batch),
+                        "message_count": pending_count,
                     },
                 )
 

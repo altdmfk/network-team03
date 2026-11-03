@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -28,7 +29,7 @@ from middleware.lightweight_broker import (
 )
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 import config
 from config import (
@@ -91,6 +92,9 @@ logger = configure_logging("soar.ingestor", level=logging.INFO)
 # ---------------------------------------------------------------------------
 # Standard JSON Log Schema (Pydantic v2 Validation)
 # ---------------------------------------------------------------------------
+_strict_schema_ctx: ContextVar[Optional[bool]] = ContextVar("strict_schema_ctx", default=None)
+
+
 class SecurityLogEvent(BaseModel):
     """
     Standardized security event schema for Main Flask API & ESP32 IoT nodes.
@@ -106,22 +110,13 @@ class SecurityLogEvent(BaseModel):
 
     @classmethod
     def set_strict_schema(cls, enabled: Optional[bool]) -> None:
+        """Sets schema strictness override via ContextVar and class attribute for backward compatibility."""
+        _strict_schema_ctx.set(enabled)
         cls._strict_schema_override = enabled
 
-    @model_validator(mode="before")
     @classmethod
-    def _handle_schema_tolerance(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-
-        # Determine effective strict_schema setting
-        is_strict = getattr(config, "STRICT_SCHEMA", True)
-        if cls._strict_schema_override is not None:
-            is_strict = cls._strict_schema_override
-
-        if is_strict:
-            return data
-
+    def _absorb_extra_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Losslessly absorbs unexpected top-level fields into raw_payload and redacts sensitive keys."""
         known_fields = {
             "schema_version",
             "timestamp",
@@ -158,6 +153,31 @@ class SecurityLogEvent(BaseModel):
         redacted_raw = redact_sensitive_data(raw_dict, patterns=active_patterns)
         data_copy["raw_payload"] = redacted_raw
         return data_copy
+
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_schema_tolerance(cls, data: Any, info: ValidationInfo) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        # Determine effective strict_schema setting:
+        # 1. Pydantic validation context (info.context) - stateless and thread-safe
+        if info is not None and info.context is not None and "strict_schema" in info.context:
+            is_strict = bool(info.context["strict_schema"])
+        else:
+            # 2. ContextVar for per-request / per-task isolation (stateless thread safety)
+            cv = _strict_schema_ctx.get()
+            if cv is not None:
+                is_strict = cv
+            elif cls._strict_schema_override is not None:
+                is_strict = cls._strict_schema_override
+            else:
+                is_strict = getattr(config, "STRICT_SCHEMA", True)
+
+        if is_strict:
+            return data
+
+        return cls._absorb_extra_fields(data)
 
     schema_version: str = Field(
         default="1.0",
@@ -290,6 +310,26 @@ class SecurityLogEvent(BaseModel):
         if not cleaned:
             raise ValueError("target_resource must not be empty.")
         return cleaned
+
+
+class StrictSecurityLogEvent(SecurityLogEvent):
+    """Explicitly strict security log event (extra fields forbidden)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _force_strict(cls, data: Any, info: ValidationInfo) -> Any:
+        return data
+
+
+class LenientSecurityLogEvent(SecurityLogEvent):
+    """Explicitly lenient security log event (surplus fields absorbed into raw_payload)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _force_lenient(cls, data: Any, info: ValidationInfo) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return cls._absorb_extra_fields(data)
 
 
 class BatchIngestRequest(BaseModel):
@@ -985,9 +1025,6 @@ class WalLogBufferingMiddleware:
             self._lag_cache_timestamp = time.monotonic()
             return snapshot
 
-    _query_broker_lag_snapshot = query_broker_native_lag
-    query_broker_lag_snapshot = query_broker_native_lag
-
     def reset_broker_storage(self) -> None:
         """
         Resets and truncates all messages and committed offsets in the lightweight broker
@@ -1358,12 +1395,40 @@ v1_router = APIRouter(prefix="/v1")
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
+def _probe_sqlite_storage(mw: Any) -> None:
+    """
+    Synchronous probe verifying SQLite WAL storage write capability and lock status.
+    Must be executed in a worker thread via asyncio.to_thread to avoid blocking the
+    FastAPI async event loop during SQLite lock contention.
+    """
+    if hasattr(mw, "check_health"):
+        mw.check_health(timeout=0.1)
+    elif mw.producer is not None and hasattr(mw.producer, "check_health"):
+        mw.producer.check_health(timeout=0.1)
+    else:
+        db_path = getattr(mw.producer, "db_path", BROKER_DB_PATH) if mw.producer else BROKER_DB_PATH
+        conn = sqlite3.connect(
+            db_path,
+            timeout=0.1,
+            isolation_level=None,
+            check_same_thread=True,
+        )
+        try:
+            conn.execute("PRAGMA busy_timeout = 100;")
+            conn.execute("BEGIN IMMEDIATE;")
+            conn.execute("ROLLBACK;")
+        finally:
+            conn.close()
+
+
 @v1_router.get("/health", status_code=status.HTTP_200_OK)
 @app.get("/health", status_code=status.HTTP_200_OK, deprecated=True)
 async def health_check() -> Dict[str, Any]:
     """
     Deep healthcheck probe for Docker Compose, GSLB/ALB, and container orchestrators.
     Verifies SQLite WAL storage write capability and lock status within 0.1s.
+    Offloaded to a worker thread via asyncio.to_thread with an explicit timeout guard
+    to avoid blocking the FastAPI event loop during DB lock contention.
     """
     mw = _active_middleware()
     if mw is None:
@@ -1373,25 +1438,11 @@ async def health_check() -> Dict[str, Any]:
         )
 
     try:
-        if hasattr(mw, "check_health"):
-            mw.check_health(timeout=0.1)
-        elif mw.producer is not None and hasattr(mw.producer, "check_health"):
-            mw.producer.check_health(timeout=0.1)
-        else:
-            db_path = getattr(mw.producer, "db_path", BROKER_DB_PATH) if mw.producer else BROKER_DB_PATH
-            conn = sqlite3.connect(
-                db_path,
-                timeout=0.1,
-                isolation_level=None,
-                check_same_thread=True,
-            )
-            try:
-                conn.execute("PRAGMA busy_timeout = 100;")
-                conn.execute("BEGIN IMMEDIATE;")
-                conn.execute("ROLLBACK;")
-            finally:
-                conn.close()
-    except (sqlite3.OperationalError, sqlite3.DatabaseError, OSError) as exc:
+        await asyncio.wait_for(
+            asyncio.to_thread(_probe_sqlite_storage, mw),
+            timeout=0.3,
+        )
+    except (sqlite3.OperationalError, sqlite3.DatabaseError, OSError, TimeoutError, asyncio.TimeoutError) as exc:
         logger.warning("Broker storage health check failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1428,7 +1479,9 @@ async def ingest_single_log(
     Ingests a single security event from Main Flask API or ESP32 IoT board,
     validates schema, and asynchronously buffers into Broker partitioned by `client_ip`.
     """
-    client_identity = identity if isinstance(identity, str) else "anonymous"
+    client_identity = identity if (isinstance(identity, str) and identity) else (
+        f"ip:{request.client.host}" if (request and request.client and request.client.host) else "ip:127.0.0.1"
+    )
     allowed, retry_after = ingest_rate_limiter.check_and_consume(client_identity, tokens=1.0)
     if not allowed:
         retry_seconds = max(1, int(math.ceil(retry_after)))
@@ -1482,7 +1535,9 @@ async def ingest_batch_logs(
             detail="Batch payload must contain at least one log event.",
         )
 
-    client_identity = identity if isinstance(identity, str) else "anonymous"
+    client_identity = identity if (isinstance(identity, str) and identity) else (
+        f"ip:{request.client.host}" if (request and request.client and request.client.host) else "ip:127.0.0.1"
+    )
     allowed, retry_after = ingest_rate_limiter.check_and_consume(
         client_identity, tokens=float(len(events))
     )
