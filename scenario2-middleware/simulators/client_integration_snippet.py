@@ -17,6 +17,38 @@ from typing import Any, Dict, Optional
 
 import requests
 
+try:
+    from auth_helper import generate_hmac_signature_headers
+except ImportError:
+    try:
+        from middleware.auth import generate_hmac_signature_headers
+    except ImportError:
+        import hashlib
+        import hmac
+
+        def generate_hmac_signature_headers(
+            api_key: str,
+            raw_body: Any,
+            timestamp: Optional[float] = None,
+        ) -> Dict[str, str]:
+            if timestamp is None:
+                timestamp = time.time()
+            ts_str = f"{timestamp:.6f}"
+            if isinstance(raw_body, (dict, list)):
+                body_bytes = json.dumps(
+                    raw_body, separators=(",", ":"), ensure_ascii=False
+                ).encode("utf-8")
+            elif isinstance(raw_body, (bytes, bytearray)):
+                body_bytes = bytes(raw_body)
+            else:
+                body_bytes = str(raw_body).encode("utf-8")
+            sig = hmac.new(
+                api_key.encode("utf-8"),
+                f"{ts_str}:".encode("utf-8") + body_bytes,
+                hashlib.sha256,
+            ).hexdigest()
+            return {"X-Signature": sig, "X-Timestamp": ts_str}
+
 logger = logging.getLogger("soar.client")
 
 
@@ -42,9 +74,11 @@ class SafeSecurityLogClient:
         recovery_timeout: float = 10.0,
         fallback_file_path: str = "./client_fallback_logs.jsonl",
         request_timeout: float = 1.0,
+        use_hmac: bool = True,
     ) -> None:
         self.endpoint_url = endpoint_url
         self.api_key = api_key
+        self.use_hmac = bool(use_hmac)
         self.max_queue_size = int(max_queue_size)
         self.failure_threshold = int(failure_threshold)
         self.recovery_timeout = float(recovery_timeout)
@@ -132,13 +166,21 @@ class SafeSecurityLogClient:
 
     def _post_to_middleware(self, item: Dict[str, Any]) -> bool:
         """Attempts HTTP delivery to middleware ingest endpoint."""
+        body_bytes = json.dumps(
+            item, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
-            headers["X-API-Key"] = self.api_key
+            if self.use_hmac:
+                headers.update(
+                    generate_hmac_signature_headers(self.api_key, body_bytes)
+                )
+            else:
+                headers["X-API-Key"] = self.api_key
         try:
             resp = requests.post(
                 self.endpoint_url,
-                json=item,
+                data=body_bytes,
                 headers=headers,
                 timeout=self.request_timeout,
             )

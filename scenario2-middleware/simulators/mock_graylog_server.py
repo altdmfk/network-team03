@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import math
@@ -35,6 +36,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("soar.mock_graylog")
 
+DEFAULT_GRAYLOG_MAX_INGEST_EPS: float = float(
+    os.environ.get("GRAYLOG_MAX_INGEST_EPS", "650.0")
+)
+DEFAULT_GRAYLOG_QUEUE_CAPACITY: int = int(
+    os.environ.get("GRAYLOG_QUEUE_CAPACITY", "1500")
+)
+
 
 class MockGraylogState:
     """Thread-safe state store for the Mock Graylog GELF HTTP Receiver."""
@@ -42,6 +50,15 @@ class MockGraylogState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.outage_mode: bool = False
+        self.simulated_latency_sec: float = 0.0
+        self.max_ingest_eps: float = DEFAULT_GRAYLOG_MAX_INGEST_EPS
+        self.queue_capacity: int = DEFAULT_GRAYLOG_QUEUE_CAPACITY
+        self.current_backlog: float = 0.0
+        self.last_leak_time: float = time.time()
+        self.dropped_overflow_events: int = 0
+        self.total_received: int = 0
+        self.unique_events: int = 0
+        self.duplicate_events: int = 0
         self.total_gelf_received: int = 0
         self.total_batches_received: int = 0
         self.rejected_503_batches: int = 0
@@ -59,6 +76,15 @@ class MockGraylogState:
     def reset(self) -> None:
         with self._lock:
             self.outage_mode = False
+            self.simulated_latency_sec = 0.0
+            self.max_ingest_eps = DEFAULT_GRAYLOG_MAX_INGEST_EPS
+            self.queue_capacity = DEFAULT_GRAYLOG_QUEUE_CAPACITY
+            self.current_backlog = 0.0
+            self.last_leak_time = time.time()
+            self.dropped_overflow_events = 0
+            self.total_received = 0
+            self.unique_events = 0
+            self.duplicate_events = 0
             self.total_gelf_received = 0
             self.total_batches_received = 0
             self.rejected_503_batches = 0
@@ -72,6 +98,39 @@ class MockGraylogState:
             self.last_traceparent = None
             self.standard_latencies.clear()
             self.priority_latencies.clear()
+
+    def _leak_locked(self, now: float) -> None:
+        """Drains current backlog continuously based on elapsed time and max_ingest_eps."""
+        if self.max_ingest_eps > 0 and self.current_backlog > 0:
+            elapsed = max(0.0, now - self.last_leak_time)
+            drained = elapsed * self.max_ingest_eps
+            self.current_backlog = max(0.0, self.current_backlog - drained)
+        self.last_leak_time = now
+
+    def get_current_backlog(self) -> float:
+        with self._lock:
+            self._leak_locked(time.time())
+            return self.current_backlog
+
+    def check_and_enqueue(self, incoming_events: int) -> bool:
+        """
+        Simulates OpenSearch / Netty write queue saturation (Bounded Queue & EPS Cap).
+        If (current_backlog + incoming_events) exceeds queue_capacity, rejects the batch,
+        increments dropped_overflow_events and rejected_503_batches, and returns False.
+        Otherwise adds incoming_events to backlog and returns True.
+        """
+        with self._lock:
+            now = time.time()
+            self._leak_locked(now)
+
+            if self.queue_capacity > 0:
+                if self.current_backlog + incoming_events > self.queue_capacity:
+                    self.dropped_overflow_events += incoming_events
+                    self.rejected_503_batches += 1
+                    return False
+
+            self.current_backlog += incoming_events
+            return True
 
     def set_outage(self, enabled: bool) -> bool:
         with self._lock:
@@ -94,16 +153,27 @@ class MockGraylogState:
             self.last_received_at = time.time()
 
             for item in records:
+                self.total_received += 1
                 raw_event_id = item.get("_event_id")
+                is_duplicate = False
                 if raw_event_id is not None and str(raw_event_id).strip():
                     event_id = str(raw_event_id).strip()
                     topic = str(item.get("_broker_topic") or "").strip()
                     dedup_key = f"{topic}:{event_id}" if topic else event_id
                     if dedup_key in self._seen_event_ids:
+                        is_duplicate = True
+                        self.duplicate_events += 1
                         self.duplicate_gelf_ignored += 1
-                        continue
-                    self._seen_event_ids.add(dedup_key)
+                    else:
+                        self._seen_event_ids.add(dedup_key)
 
+                if is_duplicate:
+                    # Note: Commercial Graylog 6.1 does not deduplicate by _event_id natively.
+                    # Mock Graylog tracks deduplication metrics while dropping duplicates for
+                    # test and demo accounting consistency.
+                    continue
+
+                self.unique_events += 1
                 self.total_gelf_received += 1
                 event_type = str(item.get("_event_type", "UNKNOWN"))
                 self.event_type_counts[event_type] = (
@@ -229,8 +299,17 @@ class MockGraylogState:
                 )
                 same_partition = len(partitions) == 1 if self.kill_chain_events else False
 
+            self._leak_locked(time.time())
             return {
                 "outage_mode": self.outage_mode,
+                "simulated_latency_sec": self.simulated_latency_sec,
+                "max_ingest_eps": self.max_ingest_eps,
+                "queue_capacity": self.queue_capacity,
+                "current_backlog": round(self.current_backlog, 2),
+                "dropped_overflow_events": self.dropped_overflow_events,
+                "total_received": self.total_received,
+                "unique_events": self.unique_events,
+                "duplicate_events": self.duplicate_events,
                 "total_gelf_received": self.total_gelf_received,
                 "total_batches_received": self.total_batches_received,
                 "rejected_503_batches": self.rejected_503_batches,
@@ -335,6 +414,9 @@ async def receive_gelf(request: Request) -> JSONResponse:
             },
         )
 
+    if graylog_state.simulated_latency_sec > 0:
+        await asyncio.sleep(graylog_state.simulated_latency_sec)
+
     tp = request.headers.get("traceparent")
     if tp:
         graylog_state.last_traceparent = tp
@@ -366,11 +448,98 @@ async def receive_gelf(request: Request) -> JSONResponse:
             )
         parsed_records.append(record)
 
+    incoming_events = len(parsed_records)
+    if incoming_events == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty GELF payload.",
+        )
+
+    # Check simulated SIEM / OpenSearch ingestion queue saturation
+    if not graylog_state.check_and_enqueue(incoming_events):
+        logger.warning(
+            "[SIEM QUEUE SATURATION] OpenSearch write queue full (backlog: %.1f, incoming: %d > capacity: %d). "
+            "Rejecting %d events with HTTP 503 (EsRejectedExecutionException / Journal Queue Full)",
+            graylog_state.get_current_backlog(),
+            incoming_events,
+            graylog_state.queue_capacity,
+            incoming_events,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": "OpenSearch EsRejectedExecutionException / Journal Queue Full",
+                "queue_capacity": graylog_state.queue_capacity,
+                "current_backlog": round(graylog_state.get_current_backlog(), 1),
+                "dropped_overflow_events": graylog_state.dropped_overflow_events,
+                "rejected_503_batches": graylog_state.rejected_503_batches,
+            },
+        )
+
     accepted = graylog_state.ingest_gelf_records(parsed_records)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={"status": "accepted", "received": accepted},
     )
+
+
+@app.get("/capacity", status_code=status.HTTP_200_OK)
+async def get_capacity() -> Dict[str, Any]:
+    """Returns current SIEM queue capacity and drain rate configuration."""
+    with graylog_state._lock:
+        graylog_state._leak_locked(time.time())
+        return {
+            "max_ingest_eps": graylog_state.max_ingest_eps,
+            "queue_capacity": graylog_state.queue_capacity,
+            "current_backlog": round(graylog_state.current_backlog, 2),
+            "dropped_overflow_events": graylog_state.dropped_overflow_events,
+        }
+
+
+@app.post("/capacity", status_code=status.HTTP_200_OK)
+async def configure_capacity(
+    eps: Optional[float] = None,
+    capacity: Optional[int] = None,
+    request: Request = None,
+) -> Dict[str, Any]:
+    """Configures simulated SIEM indexing EPS cap and burst queue capacity."""
+    if request is not None:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                if "eps" in body:
+                    eps = float(body["eps"])
+                elif "max_ingest_eps" in body:
+                    eps = float(body["max_ingest_eps"])
+                if "capacity" in body:
+                    capacity = int(body["capacity"])
+                elif "queue_capacity" in body:
+                    capacity = int(body["queue_capacity"])
+        except Exception:
+            pass
+
+    with graylog_state._lock:
+        if eps is not None:
+            graylog_state.max_ingest_eps = max(0.0, float(eps))
+        if capacity is not None:
+            graylog_state.queue_capacity = max(0, int(capacity))
+        graylog_state._leak_locked(time.time())
+        logger.info(
+            "Mock Graylog capacity updated -> max_ingest_eps=%.1f, queue_capacity=%d",
+            graylog_state.max_ingest_eps,
+            graylog_state.queue_capacity,
+        )
+        return {
+            "max_ingest_eps": graylog_state.max_ingest_eps,
+            "queue_capacity": graylog_state.queue_capacity,
+            "current_backlog": round(graylog_state.current_backlog, 2),
+            "dropped_overflow_events": graylog_state.dropped_overflow_events,
+        }
+
+
+@app.post("/capacity/{eps}/{capacity}", status_code=status.HTTP_200_OK)
+async def configure_capacity_path(eps: float, capacity: int) -> Dict[str, Any]:
+    return await configure_capacity(eps=eps, capacity=capacity)
 
 
 @app.post("/toggle-outage", status_code=status.HTTP_200_OK)
@@ -404,12 +573,71 @@ async def get_status() -> Dict[str, Any]:
     return graylog_state.get_verification_report()
 
 
+@app.get("/stats", status_code=status.HTTP_200_OK)
+async def get_stats() -> Dict[str, Any]:
+    """
+    Returns separate total, unique, duplicate event metrics, and SIEM capacity telemetry.
+    Clarifies that commercial Graylog 6.1 does not natively deduplicate by _event_id,
+    while Mock Graylog tracks these metrics for middleware idempotency verification.
+    """
+    with graylog_state._lock:
+        graylog_state._leak_locked(time.time())
+        return {
+            "total_received": graylog_state.total_received,
+            "unique_events": graylog_state.unique_events,
+            "duplicate_events": graylog_state.duplicate_events,
+            "total_batches_received": graylog_state.total_batches_received,
+            "rejected_503_batches": graylog_state.rejected_503_batches,
+            "dropped_overflow_events": graylog_state.dropped_overflow_events,
+            "max_ingest_eps": graylog_state.max_ingest_eps,
+            "queue_capacity": graylog_state.queue_capacity,
+            "current_backlog": round(graylog_state.current_backlog, 2),
+            "simulated_latency_sec": graylog_state.simulated_latency_sec,
+            "honeytoken_alerts_received": graylog_state.honeytoken_alerts_received,
+            "event_type_counts": dict(graylog_state.event_type_counts),
+            "latency_telemetry": {
+                "standard_lane": graylog_state._calculate_latency_stats(
+                    graylog_state.standard_latencies
+                ),
+                "priority_lane": graylog_state._calculate_latency_stats(
+                    graylog_state.priority_latencies
+                ),
+            },
+            "deduplication_note": (
+                "Commercial Graylog 6.1 does not deduplicate by _event_id natively. "
+                "Mock Graylog tracks unique vs. duplicate events for middleware idempotency verification."
+            ),
+        }
+
+
+@app.post("/latency/{seconds}", status_code=status.HTTP_200_OK)
+async def set_simulated_latency(seconds: float) -> Dict[str, Any]:
+    """Sets simulated downstream processing delay in seconds for backpressure testing."""
+    if seconds < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Latency must be non-negative.",
+        )
+    with graylog_state._lock:
+        graylog_state.simulated_latency_sec = float(seconds)
+    logger.info(
+        "Mock Graylog simulated latency set to %.3fs",
+        graylog_state.simulated_latency_sec,
+    )
+    return {"simulated_latency_sec": graylog_state.simulated_latency_sec}
+
+
 @app.post("/reset", status_code=status.HTTP_200_OK)
 async def reset_state() -> Dict[str, Any]:
     """Resets counters and recorded Kill-Chain events for a fresh demo run."""
     graylog_state.reset()
     logger.info("Mock Graylog server state reset.")
-    return {"status": "reset", "total_gelf_received": 0}
+    return {
+        "status": "reset",
+        "total_gelf_received": 0,
+        "dropped_overflow_events": 0,
+        "current_backlog": 0.0,
+    }
 
 
 if __name__ == "__main__":
