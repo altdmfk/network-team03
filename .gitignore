@@ -43,5 +43,4 @@ dead_letter_logs.jsonl
 *.tmp
 
 # Device-local secrets (Wi-Fi password, auth token) - fill locally, never commit
-scenario4-killchain/pico-firmware/config.py
 scenario3-killchain/pico-firmware/config.py
