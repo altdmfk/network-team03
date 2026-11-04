@@ -243,7 +243,6 @@ class TestPriorityRoutingRules:
         )
         middleware.producer = mock_producer
 
-        # Enqueue priority event
         ht_event = ingestor.SecurityLogEvent(
             client_ip="198.51.100.42",
             event_type="HONEYTOKEN_ACCESS",
@@ -254,7 +253,6 @@ class TestPriorityRoutingRules:
         )
         middleware.enqueue_event(ht_event)
 
-        # Verify produce was called with topic=security-logs.priority and key=b"198.51.100.42"
         mock_producer.produce.assert_called_once()
         call_kwargs = mock_producer.produce.call_args[1]
         assert call_kwargs["topic"] == "security-logs.priority"
@@ -567,12 +565,10 @@ class TestDualLaneMetricsAndTelemetry:
     def test_shared_metrics_store_tracks_per_lane_outbound_eps(self, tmp_path):
         db_file = str(tmp_path / "metrics_test.db")
         with SharedMetricsStore(db_file) as store:
-            # Increment 70 priority and 30 standard
             store.increment_forwarded(priority_count=70, standard_count=30, flush=True)
 
             snap = store.read_snapshot()
             assert snap["total_forwarded_to_graylog"] == 100
-            # Both per-lane outbound EPS fields are present
             assert "priority_outbound_eps" in snap
             assert "standard_outbound_eps" in snap
             assert "outbound_eps" in snap
@@ -631,13 +627,11 @@ class TestDualLaneMetricsAndTelemetry:
                 assert resp.status_code == 200
                 data = resp.json()
 
-                # Verify per-lane lag fields exist
                 assert "priority_queue_lag" in data
                 assert "standard_queue_lag" in data
                 assert data["priority_queue_lag"] == 3
                 assert data["standard_queue_lag"] == 10
 
-                # Verify throughput telemetry per-lane EPS fields exist
                 tp = data["throughput_telemetry"]
                 assert "priority_outbound_eps" in tp
                 assert "standard_outbound_eps" in tp
@@ -663,7 +657,6 @@ class TestKillChainAndGelfTopicMetadata:
         }
         raw_msg = json.dumps(raw_event).encode("utf-8")
 
-        # Standard lane
         gelf_standard = transform_to_gelf(
             raw_msg,
             broker_topic="security-logs",
@@ -675,7 +668,6 @@ class TestKillChainAndGelfTopicMetadata:
         assert gelf_standard["_broker_partition"] == 0
         assert gelf_standard["_broker_offset"] == 10
 
-        # Priority lane
         gelf_priority = transform_to_gelf(
             raw_msg,
             broker_topic="security-logs.priority",

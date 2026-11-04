@@ -180,7 +180,6 @@ class MockGraylogState:
                     self.event_type_counts.get(event_type, 0) + 1
                 )
 
-                # End-to-end latency tracking per lane
                 event_ts = float(item.get("timestamp", 0.0))
                 now_ts = time.time()
                 latency_sec = max(0.0, round(now_ts - event_ts, 4)) if event_ts > 0 else 0.0
@@ -247,7 +246,6 @@ class MockGraylogState:
                 for i in range(len(timestamps) - 1)
             )
 
-            # Evaluate ordering per lane
             per_lane_events: Dict[str, List[Dict[str, Any]]] = {}
             for e in self.kill_chain_events:
                 t = str(e.get("broker_topic") or BROKER_TOPIC)

@@ -280,7 +280,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
 
     auth_enabled = _parse_bool(source.get("AUTH_ENABLED", "true"))
 
-    raw_ingest_keys = source.get("INGEST_API_KEYS", "")
+    raw_ingest_keys = source.get("INGEST_API_KEYS", "").strip()
+    if not raw_ingest_keys and source.get("MIDDLEWARE_API_KEY"):
+        raw_ingest_keys = source.get("MIDDLEWARE_API_KEY", "").strip()
     ingest_keys_file = source.get("INGEST_API_KEYS_FILE")
     if ingest_keys_file and os.path.isfile(ingest_keys_file):
         try:

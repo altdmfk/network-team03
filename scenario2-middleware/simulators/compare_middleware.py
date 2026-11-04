@@ -36,7 +36,7 @@ try:
 
     raw_env_keys = [
         k.strip()
-        for k in os.environ.get("INGEST_API_KEYS", "").split(",")
+        for k in (os.environ.get("INGEST_API_KEYS") or os.environ.get("MIDDLEWARE_API_KEY") or "").split(",")
         if k.strip()
     ]
     if raw_env_keys:
@@ -237,7 +237,6 @@ async def benchmark_single_middleware(
     timeout = httpx.Timeout(timeout_sec)
 
     async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
-        # Snapshot baseline metrics
         try:
             base_m = (await client.get(f"{MIDDLEWARE_URL}/v1/metrics")).json()
             base_fwd = int(base_m.get("total_forwarded_to_graylog", 0))
@@ -295,7 +294,6 @@ async def benchmark_single_middleware(
         print(f"[*] Ingest Throughput     : {throughput:,.0f} logs/s")
         print(f"[*] Avg Client Blocking   : {elapsed_ingest / n * 1000:.2f} ms per log")
 
-        # Monitor drain to Graylog
         print(f"[*] Monitoring WAL drain to Graylog (EPS cap: {CONFIGURED_MAX_EPS:,.0f})...")
         expected_drain_rate = max(CONFIGURED_MAX_EPS * 0.7, 1.0)
         drain_timeout = max(45.0, (n / expected_drain_rate) + 30.0)
@@ -538,7 +536,6 @@ async def benchmark_batch_middleware(
         print(f"[*] Client Ingest Duration: {elapsed_ingest:.2f}s (Unblocked)")
         print(f"[*] Batch Ingest EPS      : {throughput:,.0f} logs/s")
 
-        # Monitor drain to Graylog
         print(f"[*] Monitoring WAL drain to Graylog (EPS cap: {CONFIGURED_MAX_EPS:,.0f})...")
         expected_drain_rate = max(CONFIGURED_MAX_EPS * 0.7, 1.0)
         drain_timeout = max(45.0, (n / expected_drain_rate) + 30.0)
@@ -796,7 +793,6 @@ async def benchmark_spike_middleware(
         print(f"[*] Ingest Throughput     : {ingest_throughput:,.0f} logs/s")
         print(f"[*] Client Drop Rate      : 0.00% (WAL Buffered)")
 
-        # Monitor drain to Graylog
         print(f"[*] Monitoring WAL drain to Graylog (EPS cap: {CONFIGURED_MAX_EPS:,.0f})...")
         expected_drain_rate = max(CONFIGURED_MAX_EPS * 0.7, 1.0)
         drain_timeout = max(45.0, (n / expected_drain_rate) + 30.0)
@@ -1121,7 +1117,9 @@ def main() -> None:
     parser.add_argument(
         "--api-key",
         type=str,
-        default=os.environ.get("INGEST_API_KEY", DEFAULT_API_KEY),
+        default=os.environ.get(
+            "INGEST_API_KEY", os.environ.get("MIDDLEWARE_API_KEY", DEFAULT_API_KEY)
+        ),
         help=f"Ingest API key for HMAC signing (default: {DEFAULT_API_KEY})",
     )
     parser.add_argument(

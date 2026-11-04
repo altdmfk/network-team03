@@ -342,7 +342,6 @@ class SQLiteBrokerStorage:
     ) -> None:
         self.db_path = os.path.abspath(db_path)
 
-        # Resolve SQLite PRAGMA busy_timeout_ms
         if busy_timeout_ms is not None:
             self.busy_timeout_ms = int(busy_timeout_ms)
         elif timeout is not None:
@@ -365,7 +364,6 @@ class SQLiteBrokerStorage:
             else float(self.busy_timeout_ms / 1000.0)
         )
 
-        # Resolve SQLite PRAGMA cache_size_kb
         if cache_size_kb is not None:
             self.cache_size_kb = int(cache_size_kb)
         elif "SQLITE_CACHE_SIZE_KB" in os.environ:
@@ -384,7 +382,6 @@ class SQLiteBrokerStorage:
         self._local = threading.local()
         self._lock = threading.Lock()
 
-        # Ensure target directory exists
         parent_dir = os.path.dirname(self.db_path)
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
@@ -527,7 +524,6 @@ class SQLiteBrokerStorage:
                     """
                 )
 
-                # Initialize default topics if not already registered
                 for topic in DEFAULT_TOPICS:
                     conn.execute(
                         "INSERT OR IGNORE INTO topics_meta (topic, num_partitions, config) VALUES (?, ?, ?);",
@@ -555,7 +551,6 @@ class SQLiteBrokerStorage:
         if row:
             return int(row[0])
 
-        # Auto-create topic with default partitions
         self.ensure_topic(topic, self.default_partitions)
         return self.default_partitions
 
@@ -653,14 +648,12 @@ class SQLiteBrokerStorage:
                 ] = []
 
                 for (topic, partition), tp_items in by_tp.items():
-                    # 1. Fetch current next_offset
                     cursor = conn.execute(
                         "SELECT next_offset FROM partition_meta WHERE topic = ? AND partition = ?;",
                         (topic, partition),
                     )
                     row = cursor.fetchone()
                     if row is None:
-                        # Auto-initialize partition_meta and topics_meta
                         base_offset = 0
                         conn.execute(
                             "INSERT OR IGNORE INTO topics_meta (topic, num_partitions, config) VALUES (?, ?, ?);",
@@ -677,7 +670,6 @@ class SQLiteBrokerStorage:
                             (base_offset + len(tp_items), topic, partition),
                         )
 
-                    # 2. Assign strictly contiguous offsets
                     for offset_idx, (
                         orig_idx,
                         t,
@@ -716,7 +708,6 @@ class SQLiteBrokerStorage:
                             )
                         )
 
-                # 3. Batch insert messages
                 conn.executemany(
                     """
                     INSERT INTO messages (topic, partition, offset, key, value, headers, timestamp_ms, created_at)
@@ -982,7 +973,6 @@ class LightweightProducer:
     ) -> None:
         cfg = dict(config or {})
 
-        # Resolve db_path
         resolved_db = (
             cfg.get("broker.db.path")
             or cfg.get("state.db.path")
@@ -1126,7 +1116,6 @@ class LightweightProducer:
         if self._stop_event.is_set():
             raise RuntimeError("Producer has been stopped.")
 
-        # 1 & 2. Backpressure checks: queue capacity and unconsumed lag threshold
         with self._unwritten_cond:
             if self._unwritten_count >= self.max_queue_size:
                 raise BufferError(
@@ -1143,7 +1132,6 @@ class LightweightProducer:
                     )
             self._unwritten_count += 1
 
-        # 3. Partition routing
         n_parts = self._get_num_partitions(topic)
         if partition is not None:
             target_partition = int(partition)
@@ -1154,7 +1142,6 @@ class LightweightProducer:
                 target_partition = self._round_robin_counters[topic] % n_parts
                 self._round_robin_counters[topic] += 1
 
-        # 4. Standardize value and key bytes
         val_bytes = (
             bytes(value)
             if isinstance(value, (bytes, bytearray))
@@ -1166,10 +1153,8 @@ class LightweightProducer:
             else (key.encode("utf-8") if key is not None else None)
         )
 
-        # 5. Timestamp resolution
         eff_ts = timestamp_ms if timestamp_ms is not None else timestamp
         if eff_ts is not None:
-            # If timestamp is in seconds (float), convert to ms
             ts_val = float(eff_ts)
             ts_ms = (
                 int(round(ts_val * 1000)) if ts_val < 1e11 else int(round(ts_val))
@@ -1227,7 +1212,6 @@ class LightweightProducer:
             time.monotonic() + float(timeout) if timeout is not None else None
         )
 
-        # 1. Wait for queue to be drained and pending writes to finish
         with self._unwritten_cond:
             while self._unwritten_count > 0:
                 if deadline is not None:
@@ -1238,7 +1222,6 @@ class LightweightProducer:
                 else:
                     self._unwritten_cond.wait(timeout=0.005)
 
-        # 2. Dispatch all pending callbacks
         while True:
             try:
                 cb, err, msg = self._callback_queue.get_nowait()
@@ -1299,7 +1282,6 @@ class LightweightProducer:
             except queue.Empty:
                 continue
 
-            # Accumulate up to batch_size or linger window
             linger_deadline = time.monotonic() + (self.linger_ms / 1000.0)
             while len(batch) < self.batch_size:
                 try:
@@ -1451,7 +1433,6 @@ class LightweightConsumer:
         self._assigned = new_assignment
         self._paused.clear()
 
-        # Initialize current fetch positions
         for t, p in self._assigned:
             comm = self._storage.get_committed_offset(self.group_id, t, p)
             if comm is not None and comm >= 0:
@@ -1463,7 +1444,6 @@ class LightweightConsumer:
                 else:
                     self._positions[(t, p)] = low
 
-        # Trigger on_assign callback if provided
         if self._on_assign and callable(self._on_assign):
             assigned_tps = [
                 TopicPartition(t, p) for t, p in sorted(self._assigned)
@@ -1534,7 +1514,6 @@ class LightweightConsumer:
         deadline = time.monotonic() + max(0.0, float(timeout))
 
         while True:
-            # Active (unpaused) partitions
             eligible = [
                 tp for tp in sorted(self._assigned) if tp not in self._paused
             ]
@@ -1564,7 +1543,6 @@ class LightweightConsumer:
 
                 msg = self._storage.get_message(topic, part, curr_offset)
                 if msg is not None:
-                    # Advance local fetch position
                     self._positions[(topic, part)] = msg.offset() + 1
                     self._rr_index = (idx + 1) % n
 

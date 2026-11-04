@@ -35,7 +35,11 @@ ATTACKER_IP = os.environ.get("ATTACKER_IP", KILL_CHAIN_TARGET_IP)
 KILL_CHAIN_IP = ATTACKER_IP
 HONEYTOKEN_IP = os.environ.get("HONEYTOKEN_IP", "172.16.42.108")
 NORMAL_SUBNET_PREFIX = os.environ.get("NORMAL_SUBNET_PREFIX", "192.168.10")
-DEFAULT_INGEST_KEY = INGEST_API_KEYS[0] if INGEST_API_KEYS else "prod-ingest-key-1"
+DEFAULT_INGEST_KEY = (
+    os.environ.get("INGEST_API_KEY")
+    or os.environ.get("MIDDLEWARE_API_KEY")
+    or (INGEST_API_KEYS[0] if INGEST_API_KEYS else "prod-ingest-key-1")
+)
 INGESTOR_BASE_URL = os.environ.get("INGESTOR_BASE_URL", INGESTOR_BASE_URL.replace("localhost", "127.0.0.1"))
 MOCK_GRAYLOG_BASE_URL = os.environ.get("MOCK_GRAYLOG_BASE_URL", MOCK_GRAYLOG_BASE_URL.replace("localhost", "127.0.0.1"))
 
