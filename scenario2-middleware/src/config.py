@@ -26,6 +26,9 @@ class PipelineSettings(BaseModel):
                 "broker_retry_1m_topic": "retry_1m_topic",
                 "broker_retry_10m_topic": "retry_10m_topic",
                 "broker_poison_topic": "poison_topic",
+                "SQLITE_CACHE_SIZE_KB": "sqlite_cache_size_kb",
+                "SQLITE_BUSY_TIMEOUT_MS": "sqlite_busy_timeout_ms",
+                "GELF_SPLIT_MAX_WORKERS": "gelf_split_max_workers",
             }
             d = dict(data)
             for old_key, new_key in mapping.items():
@@ -68,6 +71,8 @@ class PipelineSettings(BaseModel):
 
     # Persistent State & Dead-Letter Paths
     broker_db_path: str = Field(default="./state/broker_wal.db", min_length=1)
+    sqlite_cache_size_kb: int = Field(default=-64000)
+    sqlite_busy_timeout_ms: int = Field(default=15000, ge=1)
     max_broker_buffer_messages: int = Field(default=100000, ge=10)
     metrics_db_path: str = Field(default="./state/metrics.db", min_length=1)
     dead_letter_file: str = Field(
@@ -79,6 +84,7 @@ class PipelineSettings(BaseModel):
     retry_10m_topic: str = Field(default="security-logs.retry.10m", min_length=1)
     poison_topic: str = Field(default="security-logs.poison", min_length=1)
     max_retry_topic_attempts: int = Field(default=3, ge=1)
+    enable_tiered_retry: bool = Field(default=True)
 
     # HTTP Ingestor & Mock Graylog Server Configuration
     ingestor_host: str = Field(default="0.0.0.0", min_length=1)
@@ -96,6 +102,7 @@ class PipelineSettings(BaseModel):
     gelf_host: str = Field(default="security-middleware", min_length=1)
     dry_run_graylog_mock: bool = Field(default=False)
     gelf_split_post: bool = Field(default=False)
+    gelf_split_max_workers: int = Field(default=20, ge=1, le=100)
 
     # Consumer Worker Batching, Rate-Limiting & Backoff Configuration
     batch_size: int = Field(default=100, ge=1, le=10000)
@@ -195,6 +202,18 @@ class PipelineSettings(BaseModel):
     def broker_poison_topic(self) -> str:
         return self.poison_topic
 
+    @property
+    def SQLITE_CACHE_SIZE_KB(self) -> int:
+        return self.sqlite_cache_size_kb
+
+    @property
+    def SQLITE_BUSY_TIMEOUT_MS(self) -> int:
+        return self.sqlite_busy_timeout_ms
+
+    @property
+    def GELF_SPLIT_MAX_WORKERS(self) -> int:
+        return self.gelf_split_max_workers
+
     @model_validator(mode="after")
     def validate_backoff_bounds(self) -> "PipelineSettings":
         if self.max_backoff_seconds < self.base_backoff_seconds:
@@ -261,7 +280,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
 
     auth_enabled = _parse_bool(source.get("AUTH_ENABLED", "true"))
 
-    raw_ingest_keys = source.get("INGEST_API_KEYS", "")
+    raw_ingest_keys = source.get("INGEST_API_KEYS", "").strip()
+    if not raw_ingest_keys and source.get("MIDDLEWARE_API_KEY"):
+        raw_ingest_keys = source.get("MIDDLEWARE_API_KEY", "").strip()
     ingest_keys_file = source.get("INGEST_API_KEYS_FILE")
     if ingest_keys_file and os.path.isfile(ingest_keys_file):
         try:
@@ -369,6 +390,12 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
             source.get("LAG_REFRESH_INTERVAL_SEC", "1.0")
         ),
         "broker_db_path": source.get("BROKER_DB_PATH", "./state/broker_wal.db"),
+        "sqlite_cache_size_kb": int(
+            source.get("SQLITE_CACHE_SIZE_KB", "-64000")
+        ),
+        "sqlite_busy_timeout_ms": int(
+            source.get("SQLITE_BUSY_TIMEOUT_MS", "15000")
+        ),
         "max_broker_buffer_messages": int(
             source.get(
                 "MAX_BROKER_BUFFER_MESSAGES",
@@ -414,6 +441,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "gelf_split_post": _parse_bool(
             source.get("GELF_SPLIT_POST", "false")
         ),
+        "gelf_split_max_workers": int(
+            source.get("GELF_SPLIT_MAX_WORKERS", "20")
+        ),
         "batch_size": batch_size,
         "max_logs_per_sec": max_logs_per_sec,
         "batch_linger_ms": int(source.get("BATCH_LINGER_MS", "100")),
@@ -433,6 +463,9 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> PipelineSettings:
         "otel_sample_rate_priority": float(
             source.get("OTEL_SAMPLE_RATE_PRIORITY", "1.0")
         ),
+        "enable_tiered_retry": _parse_bool(
+            source.get("ENABLE_TIERED_RETRY", "true")
+        ),
     }
     return PipelineSettings(**data)
 
@@ -443,6 +476,8 @@ SETTINGS: PipelineSettings = load_settings()
 # Primary Broker Constants
 # ---------------------------------------------------------------------------
 BROKER_DB_PATH: str = SETTINGS.broker_db_path
+SQLITE_CACHE_SIZE_KB: int = SETTINGS.sqlite_cache_size_kb
+SQLITE_BUSY_TIMEOUT_MS: int = SETTINGS.sqlite_busy_timeout_ms
 MAX_BROKER_BUFFER_MESSAGES: int = SETTINGS.max_broker_buffer_messages
 BROKER_TOPIC: str = SETTINGS.topic
 BROKER_PRIORITY_TOPIC: str = SETTINGS.priority_topic
@@ -453,16 +488,7 @@ BROKER_DLQ_TOPIC: str = SETTINGS.dlq_topic
 BROKER_RETRY_1M_TOPIC: str = SETTINGS.retry_1m_topic
 BROKER_RETRY_10M_TOPIC: str = SETTINGS.retry_10m_topic
 BROKER_POISON_TOPIC: str = SETTINGS.poison_topic
-
-# Legacy Broker Aliases
-TOPIC: str = BROKER_TOPIC
-PRIORITY_TOPIC: str = BROKER_PRIORITY_TOPIC
-PARTITIONS: int = BROKER_PARTITIONS
-CONSUMER_GROUP: str = BROKER_CONSUMER_GROUP
-DLQ_TOPIC: str = BROKER_DLQ_TOPIC
-RETRY_1M_TOPIC: str = BROKER_RETRY_1M_TOPIC
-RETRY_10M_TOPIC: str = BROKER_RETRY_10M_TOPIC
-POISON_TOPIC: str = BROKER_POISON_TOPIC
+ENABLE_TIERED_RETRY: bool = SETTINGS.enable_tiered_retry
 
 # Operational Constants
 PRIORITY_EVENT_TYPES: List[str] = list(SETTINGS.priority_event_types)
@@ -503,6 +529,7 @@ GRAYLOG_GELF_URLS: List[str] = list(SETTINGS.graylog_gelf_urls)
 GELF_HOST: str = SETTINGS.gelf_host
 DRY_RUN_GRAYLOG_MOCK: bool = SETTINGS.dry_run_graylog_mock
 GELF_SPLIT_POST: bool = SETTINGS.gelf_split_post
+GELF_SPLIT_MAX_WORKERS: int = SETTINGS.gelf_split_max_workers
 
 BATCH_SIZE: int = SETTINGS.batch_size
 MAX_LOGS_PER_SEC: float = SETTINGS.max_logs_per_sec

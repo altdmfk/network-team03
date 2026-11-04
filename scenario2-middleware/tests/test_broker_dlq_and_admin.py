@@ -239,9 +239,7 @@ class TestDLQPublisherAndCommitInvariants:
 
         result = worker.process_single_batch([msg])
 
-        # Batch outcome must be ABORTED
         assert result.outcome == DeliveryOutcome.ABORTED
-        # Consumer commit MUST NOT have been called
         assert mock_consumer.commit.call_count == 0
         # Offsets remain uncommitted for future replay
         assert worker.offset_committer.in_flight_aborted is False
@@ -296,10 +294,8 @@ class TestPoisonMessageHandling:
 
         result = worker.process_single_batch([poison_msg, valid_msg])
 
-        # The valid message was successfully delivered
         assert result.outcome == DeliveryOutcome.DELIVERED
 
-        # Poison publisher was called for message 0
         assert mock_dlq_sink.publish_poison.call_count == 1
         call_msg = mock_dlq_sink.publish_poison.call_args[0][0]
         assert call_msg.offset() == 20
@@ -308,7 +304,6 @@ class TestPoisonMessageHandling:
         assert any(tp.partition == 1 and tp.offset == 21 for tp in committed_offsets)
         assert any(tp.partition == 1 and tp.offset == 22 for tp in committed_offsets)
 
-        # Metrics recorded poison message
         m = metrics.read_snapshot()
         assert m["poison_messages"] == 1
         assert m["total_forwarded_to_graylog"] == 1
@@ -351,19 +346,16 @@ class TestRetryTopicConsumer:
         success = retry_consumer.process_single_message(msg)
         assert success is True
 
-        # Escalated to DLQ
         assert mock_dlq_publisher.publish_to_dlq.call_count == 1
         args, kwargs = mock_dlq_publisher.publish_to_dlq.call_args
         assert kwargs["retry_count"] == 3
         assert "Exceeded max retry cap" in kwargs["reason"]
 
-        # Committed retry topic offset
         assert mock_consumer.commit.call_count == 1
         committed_tps = mock_consumer.commit.call_args[1]["offsets"]
         assert committed_tps[0].topic == BROKER_RETRY_1M_TOPIC
         assert committed_tps[0].offset == 46
 
-        # Metric dlq_quarantined_logs incremented
         m = metrics.read_snapshot()
         assert m["dlq_quarantined_logs"] == 1
 
@@ -409,12 +401,10 @@ class TestRetryTopicConsumer:
         success = retry_consumer.process_single_message(msg)
         assert success is True
 
-        # Partition was paused and seeked
         mock_consumer.pause.assert_called_once()
         mock_consumer.seek.assert_called_once()
         mock_consumer.resume.assert_called_once()
 
-        # Slept until due time
         assert sum(slept_durations) >= 5.0
 
     def test_retry_tier_escalation_1m_to_10m(self) -> None:
@@ -581,15 +571,13 @@ class TestReplayIdempotency:
             "_event_type": "PORT_SCAN",
         }
 
-        # First ingest
         graylog_state.ingest_gelf_records([gelf_record])
         assert graylog_state.total_gelf_received == 1
         assert graylog_state.duplicate_gelf_ignored == 0
 
-        # Second ingest of replayed message with same _event_id
         graylog_state.ingest_gelf_records([gelf_record])
-        assert graylog_state.total_gelf_received == 1  # Not incremented
-        assert graylog_state.duplicate_gelf_ignored == 1  # Correctly recognized as duplicate
+        assert graylog_state.total_gelf_received == 1
+        assert graylog_state.duplicate_gelf_ignored == 1
 
 
 # ===========================================================================

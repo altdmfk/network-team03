@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $json.body ?? $json;\nconst fields = input.fields ?? input.event?.fields ?? {};\nconst clientIp = input.client_ip ?? fields.client_ip ?? input.src_ip ?? '10.0.0.99';\nconst reason = input.reason ?? '1분 내 로그인 5회 이상 실패 (무차별 대입 공격 감지)';\nconst timestamp = input.timestamp ?? new Date().toISOString();\n\nreturn [{\n  json: {\n    event_type: 'BRUTE_FORCE',\n    client_ip: clientIp,\n    detection_reason: reason,\n    api_key_id: input.api_key_id ?? 'key-001',\n    timestamp: timestamp\n  }\n}];"
+        "jsCode": "const input = $json.body ?? $json;\nconst fields = input.fields ?? input.event?.fields ?? {};\nconst clientIp = input.client_ip ?? fields.client_ip ?? input.src_ip ?? '10.0.0.99';\nconst reason = input.reason ?? '1분 내 로그인 5회 이상 실패';\nconst timestamp = input.timestamp ?? new Date().toISOString();\n\nreturn [{\n  json: {\n    event_type: 'BRUTE_FORCE',\n    client_ip: clientIp,\n    detection_reason: reason,\n    api_key_id: input.api_key_id ?? 'key-001',\n    timestamp: timestamp\n  }\n}];"
       },
       "id": "scenario2-normalize",
       "name": "Normalize Brute Force Event",
@@ -35,7 +35,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:5000/automation/revoke-key",
+        "url": "={{ $env.AUTOMATION_WEBHOOK_BASE_URL || 'http://host.docker.internal:5000' }}/automation/revoke-key",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -66,7 +66,7 @@
             {
               "id": "scenario2-alert-text",
               "name": "text",
-              "value": "={{ (() => {\n  const detection = $('Normalize Brute Force Event').item.json;\n  const response = $json;\n  const blocked = response.ip_blocked === true || response.status === 'ok' || Boolean(response.incident);\n  return '🚨 [시나리오 2 SOAR 자동 대응 완료]\\n'\n    + '미들웨어 트래픽 평탄화 중 무차별 대입 공격(Brute Force) 탐지!\\n'\n    + '공격자 IP: ' + String(detection.client_ip) + '\\n'\n    + '탐지 사유: ' + String(detection.detection_reason) + '\\n'\n    + '자동 조치: IP 차단 ' + (blocked ? '완료 (HTTP 403 차단)' : '진행 중') + '\\n'\n    + '시간: ' + String(detection.timestamp);\n})() }}",
+              "value": "={{ (() => {\n  const detection = $('Normalize Brute Force Event').item.json;\n  const response = $json;\n  const blocked = response.ip_blocked === true || response.status === 'ok' || Boolean(response.incident);\n  return '🚨 Brute Force 탐지\\n'\n    + '공격 IP: ' + String(detection.client_ip) + '\\n'\n    + '인시던트 ID: ' + String(response.incident_id || response.incident?.incident_id || 'INC-S2-BRUTEFORCE') + '\\n'\n    + '탐지 사유: ' + String(detection.detection_reason || '1분 내 로그인 5회 이상 실패') + '\\n'\n    + '대응 결과: IP 차단: ' + (blocked ? '완료' : '진행 중') + '\\n'\n    + 'EngineSquare · 시나리오 1';\n})() }}",
               "type": "string"
             }
           ]
@@ -85,8 +85,39 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/1567368969524879513/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.DISCORD_BOT_TOKEN ? ($env.DISCORD_BOT_TOKEN.startsWith('Bot ') ? $env.DISCORD_BOT_TOKEN : 'Bot ' + $env.DISCORD_BOT_TOKEN) : 'Bot <DISCORD_BOT_TOKEN>' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  embeds: [\n    {\n      title: '🚨 Brute Force 탐지',\n      color: 1,\n      fields: [\n        {\n          name: '공격 IP',\n          value: String($('Normalize Brute Force Event').item.json.client_ip || '10.0.0.99'),\n          inline: true\n        },\n        {\n          name: '인시던트 ID',\n          value: String($('Block Attacker IP').item.json.incident_id || $('Block Attacker IP').item.json.incident?.incident_id || 'INC-S2-BRUTEFORCE'),\n          inline: true\n        },\n        {\n          name: '탐지 사유',\n          value: String($('Normalize Brute Force Event').item.json.detection_reason || '1분 내 로그인 5회 이상 실패'),\n          inline: false\n        },\n        {\n          name: '대응 결과',\n          value: 'IP 차단: ' + (($('Block Attacker IP').item.json.ip_blocked === true || $('Block Attacker IP').item.json.status === 'ok' || Boolean($('Block Attacker IP').item.json.incident)) ? '완료' : '진행 중'),\n          inline: false\n        }\n      ],\n      footer: {\n        text: 'EngineSquare · 시나리오 1'\n      }\n    }\n  ],\n  components: [\n    {\n      type: 1,\n      components: [\n        {\n          type: 2,\n          style: 5,\n          label: '실시간 대시보드 열기',\n          emoji: {\n            name: '📊'\n          },\n          url: $env.DASHBOARD_URL || 'http://127.0.0.1:5001/dashboard'\n        }\n      ]\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "id": "scenario2-discord-bot",
+      "name": "Send Discord Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        300
+      ]
+    },
+    {
+      "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: 'completed', event_type: 'BRUTE_FORCE', client_ip: $('Normalize Brute Force Event').item.json.client_ip, response: $json }) }}",
+        "responseBody": "={{ JSON.stringify({ status: 'completed', event_type: 'BRUTE_FORCE', client_ip: $('Normalize Brute Force Event').item.json.client_ip, block_response: $('Block Attacker IP').item.json, discord_notification: 'sent' }) }}",
         "options": {}
       },
       "id": "scenario2-response",
@@ -94,7 +125,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1240,
+        1480,
         300
       ]
     }
@@ -137,6 +168,17 @@
       "main": [
         [
           {
+            "node": "Send Discord Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Discord Notification": {
+      "main": [
+        [
+          {
             "node": "Respond to Graylog",
             "type": "main",
             "index": 0
@@ -147,13 +189,14 @@
   },
   "active": true,
   "settings": {},
-  "versionId": "scenario2-middleware-bruteforce-v1",
+  "versionId": "scenario2-middleware-bruteforce-v2",
   "meta": {
     "templateCredsSetupCompleted": true
   },
   "tags": [
     "scenario2",
     "soar",
-    "brute-force"
+    "brute-force",
+    "discord"
   ]
 }

@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import os
 import sys
 import time
@@ -12,6 +13,8 @@ _mid_root = os.path.dirname(_sim_dir)
 for _p in [os.path.join(_mid_root, "src"), _sim_dir, _mid_root]:
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
+
+from auth_helper import generate_hmac_signature_headers
 
 try:
     from config import BATCH_SIZE, INGEST_API_KEYS
@@ -74,14 +77,20 @@ async def run_load_test_iteration(
         async def send_batch(idx: int, batch: List[Dict[str, Any]]) -> None:
             nonlocal read_errors, other_errors, accepted_logs
             async with semaphore:
-                # 토큰 버킷 부하 분산을 위해 허용된 수집 API 키를 라운드로빈으로 순환 사용
+                # 토큰 버킷 부하 분산을 위해 허용된 수집 API 키를 라운드로빈으로 순환 사용하며 HMAC 서명 생성
                 key = api_keys[idx % len(api_keys)]
-                headers = {"X-API-Key": key}
+                body_bytes = json.dumps(
+                    {"logs": batch}, separators=(",", ":"), ensure_ascii=False
+                ).encode("utf-8")
+                headers = {
+                    "Content-Type": "application/json",
+                    **generate_hmac_signature_headers(key, body_bytes),
+                }
                 while True:
                     try:
                         resp = await client.post(
                             INGESTOR_URL,
-                            json={"logs": batch},
+                            content=body_bytes,
                             headers=headers,
                         )
                         if resp.status_code == 202:

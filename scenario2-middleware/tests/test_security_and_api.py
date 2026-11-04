@@ -71,7 +71,6 @@ class TestPIIAndSecretRedaction:
         assert is_sensitive_key("session", patterns)
         assert is_sensitive_key("session_id", patterns)
 
-        # Non-sensitive keys
         assert not is_sensitive_key("username", patterns)
         assert not is_sensitive_key("client_ip", patterns)
         assert not is_sensitive_key("target_resource", patterns)
@@ -174,7 +173,6 @@ class TestAuthenticationAndRoleSeparation:
         client = TestClient(ingestor_app)
 
         with patch("ingestor.wal_middleware.enqueue_event_async"):
-            # Valid key-alpha
             resp_alpha = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -182,7 +180,6 @@ class TestAuthenticationAndRoleSeparation:
             )
             assert resp_alpha.status_code == 202
 
-            # Valid key-beta
             resp_beta = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -190,7 +187,6 @@ class TestAuthenticationAndRoleSeparation:
             )
             assert resp_beta.status_code == 202
 
-            # Invalid key
             resp_invalid = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -269,7 +265,6 @@ class TestAuthenticationAndRoleSeparation:
         }
 
         with patch("ingestor.wal_middleware.enqueue_event_async"):
-            # 1st request succeeds
             resp1 = client.post("/v1/ingest", content=body_bytes, headers=headers)
             assert resp1.status_code == 202
 
@@ -289,7 +284,6 @@ class TestAuthenticationAndRoleSeparation:
         client = TestClient(ingestor_app)
 
         with patch("ingestor.wal_middleware.enqueue_event_async"):
-            # 1. Ingest key on ingest endpoint -> PASS
             resp = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -297,7 +291,6 @@ class TestAuthenticationAndRoleSeparation:
             )
             assert resp.status_code == 202
 
-            # 2. Admin key on ingest endpoint -> FAIL (401)
             resp = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -309,7 +302,6 @@ class TestAuthenticationAndRoleSeparation:
         with patch("ingestor.wal_middleware.query_topic_stats") as mock_stats:
             mock_stats.return_value = {"topics": {}, "total_dlq_count": 0}
 
-            # 3. Ingest key on admin endpoint -> FAIL (401)
             resp = client.get(
                 "/v1/admin/dlq",
                 headers={"X-API-Key": "ingest-key-only"},
@@ -317,7 +309,6 @@ class TestAuthenticationAndRoleSeparation:
             assert resp.status_code == 401
             assert "Invalid admin API key" in resp.json()["detail"]
 
-            # 4. Admin key on admin endpoint -> PASS (200)
             resp = client.get(
                 "/v1/admin/dlq",
                 headers={"X-API-Key": "admin-key-only"},
@@ -375,7 +366,6 @@ class TestPerClientRateLimiting:
         client = TestClient(ingestor_app)
 
         with patch("ingestor.wal_middleware.enqueue_event_async"):
-            # 1st request -> OK
             r1 = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -383,7 +373,6 @@ class TestPerClientRateLimiting:
             )
             assert r1.status_code == 202
 
-            # 2nd request -> OK
             r2 = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -391,7 +380,6 @@ class TestPerClientRateLimiting:
             )
             assert r2.status_code == 202
 
-            # 3rd request -> Rate limited (429)
             r3 = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -416,7 +404,6 @@ class TestPerClientRateLimiting:
         client = TestClient(ingestor_app)
 
         with patch("ingestor.wal_middleware.enqueue_event_async"):
-            # Client A consumes its token
             r_a1 = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -424,7 +411,6 @@ class TestPerClientRateLimiting:
             )
             assert r_a1.status_code == 202
 
-            # Client A is rate limited
             r_a2 = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -432,7 +418,6 @@ class TestPerClientRateLimiting:
             )
             assert r_a2.status_code == 429
 
-            # Client B has its own bucket and succeeds
             r_b1 = client.post(
                 "/v1/ingest",
                 json=sample_event_dict(),
@@ -492,12 +477,10 @@ class TestVersionedAPIAndDeprecatedAliases:
     def test_v1_endpoints_do_not_have_deprecation_header(self) -> None:
         client = TestClient(ingestor_app)
 
-        # /v1/health
         h_resp = client.get("/v1/health")
         assert h_resp.status_code == 200
         assert "Deprecation" not in h_resp.headers
 
-        # /v1/metrics
         with patch("ingestor.wal_middleware.query_broker_native_lag") as mock_lag:
             mock_lag.return_value = {
                 "broker_total_messages": 0,
@@ -513,12 +496,10 @@ class TestVersionedAPIAndDeprecatedAliases:
     def test_legacy_endpoints_return_deprecation_header(self) -> None:
         client = TestClient(ingestor_app)
 
-        # /health
         h_resp = client.get("/health")
         assert h_resp.status_code == 200
         assert h_resp.headers.get("Deprecation") == "true"
 
-        # /metrics
         with patch("ingestor.wal_middleware.query_broker_native_lag") as mock_lag:
             mock_lag.return_value = {
                 "broker_total_messages": 0,
@@ -531,13 +512,11 @@ class TestVersionedAPIAndDeprecatedAliases:
             assert m_resp.status_code == 200
             assert m_resp.headers.get("Deprecation") == "true"
 
-        # /ingest
         with patch("ingestor.wal_middleware.enqueue_event_async"):
             i_resp = client.post("/ingest", json=sample_event_dict())
             assert i_resp.status_code == 202
             assert i_resp.headers.get("Deprecation") == "true"
 
-        # /admin/dlq
         with patch("ingestor.wal_middleware.query_topic_stats") as mock_stats:
             mock_stats.return_value = {"topics": {}, "total_dlq_count": 0}
             a_resp = client.get("/admin/dlq")
@@ -554,7 +533,6 @@ class TestBufferErrorFastFail:
     ) -> None:
         db_file = str(tmp_path / "fast_fail.db")
         with SharedMetricsStore(db_file) as store:
-            # Default retries = 2, sleep = 0.001
             middleware = WalLogBufferingMiddleware(store)
             mock_producer = MagicMock()
             mock_producer.produce.side_effect = BufferError("Queue saturated")
