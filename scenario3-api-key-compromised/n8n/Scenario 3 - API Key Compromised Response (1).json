@@ -1,0 +1,260 @@
+{
+  "name": "Scenario 3 - API Key Compromised Response",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scenario3-api-key-compromised",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ccd4014c-0be7-45b6-846e-34b15f29649a",
+      "name": "Webhook",
+      "webhookId": "d5b7a91a-3961-4a7b-af47-08b4226afa08"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5000/automation/revoke-key",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const root = $json.body ?? $json;\n  const event = root.event ?? root;\n  const fields = event.fields ?? root.fields ?? event.backlog?.[0]?.fields ?? root.backlog?.[0]?.fields ?? {};\n  const api_key_id = root.api_key_id ?? root.fields?.api_key_id ?? event.fields?.api_key_id ?? fields.api_key_id;\n  const client_ip = root.client_ip ?? root.fields?.client_ip ?? event.fields?.client_ip ?? fields.client_ip;\n  const detection_reason = root.detection_reason ?? root.fields?.detection_reason ?? event.fields?.detection_reason ?? fields.detection_reason ?? 'not_allowed_ip';\n  const event_type = root.event_type ?? root.fields?.event_type ?? event.fields?.event_type ?? fields.event_type ?? 'api_key_compromised';\n  if (!api_key_id || !client_ip || api_key_id === 'unknown' || client_ip === 'unknown') throw new Error('Graylog event missing api_key_id or client_ip');\n  return { api_key_id, client_ip, detection_reason, event_type };\n})() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "4ac0b8af-58d9-4993-9cb1-8b3c5e6212dd",
+      "name": "API 키 폐기·재발급·IP 차단"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7ba8fd5a-2845-4415-9544-bb25d315469f",
+              "leftValue": "={{ $json.key_revoked }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        0
+      ],
+      "id": "eb8ae0ee-ab5e-4f7c-9544-a7f18f6759da",
+      "name": "대응 결과 확인"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:5000/api/incidents",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "id": "9f5f96fe-a09d-414a-a23a-2dff670cda0c",
+      "name": "인시던트 생성 확인"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:5000/api/blocked-ips",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        0
+      ],
+      "id": "706bcafd-6f36-4a89-a287-ee9608e91681",
+      "name": "IP 차단 결과 확인"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/1567369019387023382/e45V4FBEFcnGOpyBOdRV_uTOyjTu52Y--Vy8VPt_0QNUFCrGZXjh8hIrrAMdl-dRDCuo",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"allowed_mentions\": { \"parse\": [] },\n  \"embeds\": [\n    {\n      \"title\": \"🚨 유출 API 키 사용 탐지\",\n      \"color\": 15158332,\n      \"fields\": [\n        {\n          \"name\": \"공격 IP\",\n          \"value\": \"{{ $('API 키 폐기·재발급·IP 차단').first().json.incident?.client_ip || '확인 필요' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"인시던트\",\n          \"value\": \"{{ $('API 키 폐기·재발급·IP 차단').first().json.incident_id || '미생성' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"키 식별자\",\n          \"value\": \"{{ $('API 키 폐기·재발급·IP 차단').first().json.incident?.api_key_id || '확인 필요' }}\"\n        },\n        {\n          \"name\": \"탐지 사유\",\n          \"value\": \"{{ $('API 키 폐기·재발급·IP 차단').first().json.incident?.detection_reason || '확인 필요' }}\"\n        },\n        {\n          \"name\": \"대응 결과\",\n          \"value\": \"기존 키 폐기: {{ $('API 키 폐기·재발급·IP 차단').first().json.key_revoked === true ? '완료' : '미확인' }}\\n교체 키 발급: {{ $('API 키 폐기·재발급·IP 차단').first().json.new_api_key_id ? '확인' : '미확인' }}\\nIP 차단: {{ $('API 키 폐기·재발급·IP 차단').first().json.ip_blocked === true ? '완료' : '미확인' }}\"\n        }\n      ],\n      \"footer\": {\n        \"text\": \"EngineSquare · 시나리오 2\"\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        96
+      ],
+      "id": "db0b46f1-34cd-4456-91ee-beb48401dbf4",
+      "name": "디스코드 알림 전송"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5001/api/security-events",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const source = $('API 키 폐기·재발급·IP 차단').first().json ?? {};\n  const response = $('대응 결과 확인').first().json ?? {};\n  const incident = $('인시던트 생성 확인').first().json ?? {};\n  const webhook = $('Webhook').first().json ?? {};\n  const body = webhook.body ?? webhook;\n  const find = (value, key) => {\n    if (!value || typeof value !== 'object') return undefined;\n    if (value[key] !== undefined && value[key] !== null && value[key] !== '') return value[key];\n    for (const child of Object.values(value)) {\n      const found = find(child, key);\n      if (found !== undefined) return found;\n    }\n    return undefined;\n  };\n  const apiKeyId = find(source, 'api_key_id') ?? find(body, 'api_key_id');\n  const clientIp = find(source, 'client_ip') ?? find(body, 'client_ip');\n  const reason = find(source, 'detection_reason') ?? find(body, 'detection_reason') ?? 'not_allowed_ip';\n  const eventType = find(source, 'event_type') ?? find(body, 'event_type') ?? 'api_key_compromised';\n  const incidentId = find(source, 'incident_id') ?? find(response, 'incident_id') ?? find(body, 'incident_id') ?? find(incident, 'created_incident_id') ?? find(incident, 'incident_id');\n  if (!apiKeyId || !clientIp || !incidentId) throw new Error('대시보드 전송값 누락: api_key_id, client_ip 또는 incident_id');\n  return { event_type: eventType, incident_id: incidentId, api_key_id: apiKeyId, client_ip: clientIp, severity: '높음', status: '열림', decision: '거부', action: '키 폐기·IP 차단', reason };\n})() }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        -96
+      ],
+      "id": "2ce2ace6-9af3-48f7-a650-513173c40a78",
+      "name": "대시보드"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e7738976-3936-451e-8d75-56e50a8b4027",
+              "name": "text",
+              "value": "={{ (() => {\n  const response = $('API 키 폐기·재발급·IP 차단').item.json;\n  const incident = response.incident ?? {};\n  const reason = incident.detection_reason ?? incident.reason ?? response.detection_reason ?? 'unknown';\n  const reasons = { not_allowed_ip: '비허용 IP에서 API 키 사용', suspicious_user_agent: '의심스러운 User-Agent에서 API 키 사용' };\n  const incidentId = incident.incident_id ?? response.incident_id;\n  const incidentState = incidentId ? (incident.status === 'created' ? '생성 완료' : '생성 확인') : '미생성';\n  const revoked = response.key_revoked === true;\n  const replaced = Boolean(response.new_api_key_id);\n  const blocked = response.ip_blocked === true || incident.ip_blocked === true;\n  return '🚨 [시나리오 3 API 키 유출 의심]\\n'\n    + '키 식별자: ' + String(incident.api_key_id ?? response.api_key_id ?? '확인 불가')\n    + ' | 공격 IP: ' + String(incident.client_ip ?? response.client_ip ?? '확인 불가')\n    + '\\n탐지 사유: ' + String(reasons[reason] ?? reason)\n    + '\\n📋 인시던트: ' + String(incidentId ?? '없음') + ' | 생성 상태: ' + incidentState\n    + '\\n대응 결과: 기존 키 폐기 ' + (revoked ? '완료' : '미확인')\n    + ' · 교체 키 발급 ' + (replaced ? '확인' : '미확인')\n    + ' · IP 차단 ' + (blocked ? '완료' : '미확인');\n  })() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "f0194160-6c7e-4db3-aba4-8d7e588747d7",
+      "name": "메시지(잠금)"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "API 키 폐기·재발급·IP 차단",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API 키 폐기·재발급·IP 차단": {
+      "main": [
+        [
+          {
+            "node": "대응 결과 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "대응 결과 확인": {
+      "main": [
+        [
+          {
+            "node": "인시던트 생성 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "인시던트 생성 확인": {
+      "main": [
+        [
+          {
+            "node": "IP 차단 결과 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IP 차단 결과 확인": {
+      "main": [
+        [
+          {
+            "node": "메시지(잠금)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "메시지(잠금)": {
+      "main": [
+        [
+          {
+            "node": "대시보드",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "디스코드 알림 전송",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "대시보드": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "0bc9a33d-00e2-4a07-85f4-221c2fe915e2",
+  "meta": {
+    "instanceId": "11f8e81a7a0837b3753323698b2b3db14636959fc4de5b967b2a876c4562dfb2"
+  },
+  "nodeGroups": [],
+  "id": "4cbUt3GxnLtTC7jF",
+  "tags": []
+}
