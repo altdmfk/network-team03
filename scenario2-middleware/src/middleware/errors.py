@@ -103,7 +103,6 @@ def register_problem_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         instance = request.url.path
         raw_errors = exc.errors()
-        # Create a helpful human-readable detail string containing field names and messages
         messages: List[str] = []
         for err in raw_errors:
             loc = " -> ".join(str(loc_item) for loc_item in err.get("loc", []))

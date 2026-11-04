@@ -53,13 +53,16 @@ def _load_keys_from_value_or_file(raw_value: Optional[str]) -> List[str]:
 
 
 def get_ingest_api_keys() -> List[str]:
-    """Retrieves allowed ingest API keys from INGEST_API_KEYS or INGEST_API_KEYS_FILE."""
+    """Retrieves allowed ingest API keys from INGEST_API_KEYS, INGEST_API_KEYS_FILE, or MIDDLEWARE_API_KEY."""
     file_path = os.environ.get("INGEST_API_KEYS_FILE")
     if file_path:
         keys = _load_keys_from_value_or_file(file_path)
         if keys:
             return keys
-    return _load_keys_from_value_or_file(os.environ.get("INGEST_API_KEYS", ""))
+    raw_keys = os.environ.get("INGEST_API_KEYS", "").strip()
+    if not raw_keys and os.environ.get("MIDDLEWARE_API_KEY"):
+        raw_keys = os.environ.get("MIDDLEWARE_API_KEY", "").strip()
+    return _load_keys_from_value_or_file(raw_keys)
 
 
 def get_admin_api_keys() -> List[str]:
@@ -258,7 +261,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
                 headers={"WWW-Authenticate": "Signature"},
             )
 
-        # Parse timestamp
         try:
             req_ts = float(ts_header.strip())
         except ValueError:
@@ -268,7 +270,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
                 headers={"WWW-Authenticate": "Signature"},
             )
 
-        # Verify 300-second replay window
         now = time.time()
         if abs(now - req_ts) > REPLAY_WINDOW_SECONDS:
             raise HTTPException(
@@ -277,7 +278,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
                 headers={"WWW-Authenticate": "Signature"},
             )
 
-        # Replay protection check
         sig_id = f"{sig_header.strip()}:{ts_header.strip()}"
         if not replay_cache.add_if_not_present(sig_id, req_ts):
             raise HTTPException(
@@ -297,7 +297,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
             headers={"WWW-Authenticate": "Signature"},
         )
 
-    # Neither credential provided
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=f"Authentication required for {auth_role_name} endpoint. Provide X-API-Key or X-Timestamp + X-Signature.",

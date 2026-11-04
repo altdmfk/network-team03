@@ -164,7 +164,7 @@ class GraylogDeliveryClient:
                                 failed_indices.append(idx)
                                 last_failed_exc = exc
                             elif resp is not None and (200 <= resp.status_code < 300):
-                                pass  # Item delivered successfully
+                                pass
                             else:
                                 failed_indices.append(idx)
                                 last_failed_resp = resp
@@ -189,7 +189,6 @@ class GraylogDeliveryClient:
                                 )
                             return DeliveryOutcome.DELIVERED
 
-                        # Classify failure metrics and error reason for the partial batch
                         if last_failed_resp is not None:
                             sc = last_failed_resp.status_code
                             if 500 <= sc < 600:

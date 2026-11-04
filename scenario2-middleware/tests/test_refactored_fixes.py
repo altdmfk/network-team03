@@ -107,7 +107,6 @@ class TestAPIKeyHashingInMemory:
             )
             assert resp.status_code == 202
 
-        # Check buckets state
         bucket_keys = list(custom_limiter._buckets.keys())
         assert len(bucket_keys) == 1
         # Raw API key MUST NOT appear anywhere in the buckets
@@ -256,7 +255,6 @@ class TestPydanticModelStatelessValidation:
     def test_pydantic_validation_context_strict_and_lenient(self) -> None:
         raw_with_extra = sample_log_dict(unexpected_extra="leak_value")
 
-        # Lenient via context
         lenient_event = SecurityLogEvent.model_validate(
             raw_with_extra,
             context={"strict_schema": False},
@@ -264,7 +262,6 @@ class TestPydanticModelStatelessValidation:
         assert isinstance(lenient_event.raw_payload, dict)
         assert lenient_event.raw_payload["unexpected_extra"] == "leak_value"
 
-        # Strict via context
         with pytest.raises(Exception):
             SecurityLogEvent.model_validate(
                 raw_with_extra,
@@ -274,11 +271,9 @@ class TestPydanticModelStatelessValidation:
     def test_subclass_strict_and_lenient_models(self) -> None:
         raw_with_extra = sample_log_dict(vendor_field="custom_val")
 
-        # Strict subclass rejects extra fields
         with pytest.raises(Exception):
             StrictSecurityLogEvent(**raw_with_extra)
 
-        # Lenient subclass absorbs extra fields
         lenient_event = LenientSecurityLogEvent(**raw_with_extra)
         assert isinstance(lenient_event.raw_payload, dict)
         assert lenient_event.raw_payload["vendor_field"] == "custom_val"
@@ -368,13 +363,11 @@ class TestRealDLQReplay:
             },
         ]
 
-        # Publish 2 messages to DLQ
         published = publisher.publish_messages(
             topic=dlq_topic, messages=test_batch, reason="Delivery failure 503"
         )
         assert published is True
 
-        # Now replay from DLQ topic to target topic
         replayed_count = publisher.replay(
             source_topic=dlq_topic,
             target_topic=target_topic,
@@ -382,7 +375,6 @@ class TestRealDLQReplay:
         )
         assert replayed_count == 2
 
-        # Verify messages arrived on target_topic with x-replay-id and original event IDs
         consumer = Consumer(
             {
                 "bootstrap.servers": "localhost:9092",
@@ -551,7 +543,6 @@ class TestBenchmarkAndSimulatorsFairness:
         import simulators.compare_middleware as comp
 
         parser = argparse.ArgumentParser()
-        # Ensure helper compiles and options exist
         assert hasattr(comp, "benchmark_single_direct_graylog")
         assert hasattr(comp, "benchmark_single_middleware")
         assert hasattr(comp, "benchmark_batch_direct_graylog")
@@ -585,7 +576,6 @@ class TestHMACSignatureAcrossSimulators:
         assert "X-Signature" in headers
         assert "X-Timestamp" in headers
 
-        # Verify against auth.py
         verified = verify_hmac_signature(
             raw_body=body_bytes,
             timestamp_str=headers["X-Timestamp"],
@@ -631,7 +621,6 @@ class TestMockGraylogDeduplicationAndLatency:
         client = TestClient(graylog_app)
 
         graylog_state.reset()
-        # Ingest sample
         records = [
             {"version": "1.1", "short_message": "ev1", "_event_id": "id-10"},
             {"version": "1.1", "short_message": "ev1-dup", "_event_id": "id-10"},
@@ -640,7 +629,6 @@ class TestMockGraylogDeduplicationAndLatency:
         resp = client.post("/gelf", content=ndjson)
         assert resp.status_code == 202
 
-        # Check /stats
         stats_resp = client.get("/stats")
         assert stats_resp.status_code == 200
         stats = stats_resp.json()
@@ -649,13 +637,11 @@ class TestMockGraylogDeduplicationAndLatency:
         assert stats["duplicate_events"] == 1
         assert "deduplication_note" in stats
 
-        # Set latency
         lat_resp = client.post("/latency/0.05")
         assert lat_resp.status_code == 200
         assert lat_resp.json()["simulated_latency_sec"] == 0.05
         assert graylog_state.simulated_latency_sec == 0.05
 
-        # Reset latency
         client.post("/latency/0")
         assert graylog_state.simulated_latency_sec == 0.0
 
@@ -664,19 +650,17 @@ class TestMockGraylogDeduplicationAndLatency:
         client = TestClient(graylog_app)
 
         graylog_state.reset()
-        # 1. Check default capacity
         cap_resp = client.get("/capacity")
         assert cap_resp.status_code == 200
         cap_data = cap_resp.json()
         assert cap_data["max_ingest_eps"] == 650.0
         assert cap_data["queue_capacity"] == 1500
 
-        # 2. Set tight capacity for deterministic overflow test (capacity=5, eps=10)
+        # Tight capacity for deterministic overflow test (capacity=5, eps=10)
         set_resp = client.post("/capacity", json={"max_ingest_eps": 10.0, "queue_capacity": 5})
         assert set_resp.status_code == 200
         assert set_resp.json()["queue_capacity"] == 5
 
-        # 3. Send 5 records (fits in capacity)
         records_fit = [
             {"version": "1.1", "short_message": f"fit_{i}", "_event_id": f"fit-{i}"}
             for i in range(5)
@@ -686,7 +670,7 @@ class TestMockGraylogDeduplicationAndLatency:
         assert resp_fit.json()["received"] == 5
         assert graylog_state.get_current_backlog() > 0
 
-        # 4. Immediately send 1 more record -> exceeds queue_capacity (5 + 1 > 5) -> HTTP 503
+        # Exceed queue_capacity (5 + 1 > 5) -> HTTP 503
         record_overflow = [{"version": "1.1", "short_message": "overflow_1"}]
         resp_overflow = client.post("/gelf", content=json.dumps(record_overflow[0]))
         assert resp_overflow.status_code == 503
@@ -695,18 +679,39 @@ class TestMockGraylogDeduplicationAndLatency:
         assert data_503["dropped_overflow_events"] == 1
         assert data_503["rejected_503_batches"] == 1
 
-        # Check /stats reflects dropped events
         stats = client.get("/stats").json()
         assert stats["dropped_overflow_events"] == 1
         assert stats["rejected_503_batches"] == 1
 
-        # 5. Reset restores defaults and clears dropped counts
         reset_resp = client.post("/reset")
         assert reset_resp.status_code == 200
         assert reset_resp.json()["dropped_overflow_events"] == 0
         stats_after = client.get("/stats").json()
         assert stats_after["dropped_overflow_events"] == 0
         assert stats_after["queue_capacity"] == 1500
+
+
+class TestOuterMiddlewareApiKeyInheritance:
+    """Verifies that MIDDLEWARE_API_KEY from outer .env is seamlessly inherited by config and auth."""
+
+    def test_config_inherits_middleware_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("INGEST_API_KEYS", raising=False)
+        monkeypatch.delenv("INGEST_API_KEYS_FILE", raising=False)
+        monkeypatch.setenv("MIDDLEWARE_API_KEY", "inherited-outer-key-777")
+
+        settings = config.load_settings()
+        assert "inherited-outer-key-777" in settings.ingest_api_keys
+
+    def test_auth_inherits_middleware_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from middleware.auth import get_ingest_api_keys
+
+        monkeypatch.delenv("INGEST_API_KEYS", raising=False)
+        monkeypatch.delenv("INGEST_API_KEYS_FILE", raising=False)
+        monkeypatch.setenv("MIDDLEWARE_API_KEY", "inherited-outer-key-888")
+
+        keys = get_ingest_api_keys()
+        assert "inherited-outer-key-888" in keys
+
 
 
 

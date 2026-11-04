@@ -201,7 +201,6 @@ class TestConsumerWorkerMetricsDaemonPort:
             assert worker._metrics_thread is not None
             assert worker._metrics_thread.daemon is True
 
-            # Scrape via HTTP
             time.sleep(0.1)
             resp = httpx.get(f"http://127.0.0.1:{port}/metrics", timeout=2.0)
             assert resp.status_code == 200

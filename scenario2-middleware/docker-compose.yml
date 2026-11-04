@@ -1,29 +1,4 @@
 services:
-# services:
-#   mock-graylog:
-#     build:
-#       context: .
-#       dockerfile: Dockerfile
-#     container_name: soar-mock-graylog
-#     hostname: mock-graylog
-#     restart: unless-stopped
-#     mem_limit: 256m
-#     command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", "12201", "--workers", "1"]
-#     ports:
-#       - "12201:12201"
-#     environment:
-#       MOCK_GRAYLOG_HOST: "0.0.0.0"
-#       MOCK_GRAYLOG_PORT: "12201"
-#       KILL_CHAIN_TARGET_IP: "10.0.0.99"
-#     healthcheck:
-#       test: ["CMD", "curl", "-f", "http://localhost:12201/health"]
-#       interval: 10s
-#       timeout: 5s
-#       retries: 5
-#       start_period: 5s
-#     networks:
-#       - soar-siem-net
-
   ingestor:
     build:
       context: .
@@ -35,6 +10,11 @@ services:
     mem_limit: 384m
     ports:
       - "8000:8000"
+    env_file:
+      - path: ../.env
+        required: false
+      - path: .env
+        required: false
     environment:
       BROKER_DB_PATH: "/app/state/broker_wal.db"
       BROKER_TOPIC: "security-logs"
@@ -51,9 +31,9 @@ services:
       MAX_LOGS_PER_SEC: "500.0"
       BATCH_LINGER_MS: "100"
       POLL_TIMEOUT: "0.1"
-      AUTH_ENABLED: "true"
-      INGEST_API_KEYS: "prod-ingest-key-1,prod-ingest-key-2"
-      ADMIN_API_KEY: "prod-admin-secret-key-99"
+      AUTH_ENABLED: "${AUTH_ENABLED:-true}"
+      INGEST_API_KEYS: "${INGEST_API_KEYS:-${MIDDLEWARE_API_KEY:-prod-ingest-key-1,prod-ingest-key-2}}"
+      ADMIN_API_KEY: "${ADMIN_API_KEY:-prod-admin-secret-key-99}"
       # SQLite WAL PRAGMA memory & lock contention tuning
       SQLITE_CACHE_SIZE_KB: "-64000"
       SQLITE_BUSY_TIMEOUT_MS: "15000"
@@ -78,6 +58,11 @@ services:
     stop_grace_period: 20s
     mem_limit: 384m
     command: ["python", "src/consumer_worker.py"]
+    env_file:
+      - path: ../.env
+        required: false
+      - path: .env
+        required: false
     environment:
       BROKER_DB_PATH: "/app/state/broker_wal.db"
       BROKER_TOPIC: "security-logs"
@@ -111,9 +96,6 @@ services:
       ENABLE_TIERED_RETRY: "true"
     volumes:
       - metrics-state:/app/state
-    # depends_on:
-    #   mock-graylog:
-    #     condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import os; assert os.path.exists('/proc/1/cmdline') and b'consumer_worker.py' in open('/proc/1/cmdline', 'rb').read()\""]
       interval: 10s

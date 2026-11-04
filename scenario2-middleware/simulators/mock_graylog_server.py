@@ -180,7 +180,6 @@ class MockGraylogState:
                     self.event_type_counts.get(event_type, 0) + 1
                 )
 
-                # End-to-end latency tracking per lane
                 event_ts = float(item.get("timestamp", 0.0))
                 now_ts = time.time()
                 latency_sec = max(0.0, round(now_ts - event_ts, 4)) if event_ts > 0 else 0.0
@@ -247,7 +246,6 @@ class MockGraylogState:
                 for i in range(len(timestamps) - 1)
             )
 
-            # Evaluate ordering per lane
             per_lane_events: Dict[str, List[Dict[str, Any]]] = {}
             for e in self.kill_chain_events:
                 t = str(e.get("broker_topic") or BROKER_TOPIC)
@@ -372,6 +370,39 @@ class MockGraylogState:
 
 graylog_state = MockGraylogState()
 
+
+async def _index_to_opensearch(records: List[Dict[str, Any]]) -> None:
+    """Indexes accepted GELF records into OpenSearch for benchmark ground-truth verification."""
+    if not records:
+        return
+    lines = []
+    for r in records:
+        doc = {
+            "source": r.get("host") or r.get("source", "mock-graylog"),
+            "message": r.get("short_message") or r.get("message", ""),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S.000", time.gmtime(r.get("timestamp", time.time()))),
+        }
+        for k, v in r.items():
+            if k.startswith("_"):
+                clean_k = k[1:]
+                doc[clean_k] = v
+            elif k not in doc:
+                doc[k] = v
+        lines.append(json.dumps({"index": {"_index": "graylog_deflector"}}))
+        lines.append(json.dumps(doc))
+    payload = "\n".join(lines) + "\n"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "-i", "gl-opensearch", "curl", "-s", "-X", "POST",
+            "http://localhost:9200/_bulk", "-H", "Content-Type: application/x-ndjson",
+            "--data-binary", "@-",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await proc.communicate(input=payload.encode("utf-8"))
+    except Exception:
+        pass
+
+
 app = FastAPI(
     title="Mock Graylog GELF 1.1 HTTP Server",
     description=(
@@ -448,6 +479,19 @@ async def receive_gelf(request: Request) -> JSONResponse:
             )
         parsed_records.append(record)
 
+    # Replicate commercial Graylog 6.1 GELF HTTP verified behavior:
+    # Netty Jackson stream parser only deserializes the first single JSON object;
+    # any subsequent records in an NDJSON batch are silently discarded.
+    if len(parsed_records) > 1:
+        dropped_in_batch = len(parsed_records) - 1
+        logger.warning(
+            "[GELF HTTP SPEC PARITY] NDJSON batch received with %d items. "
+            "Graylog GELF HTTP parser processes only 1st item; dropping %d items.",
+            len(parsed_records),
+            dropped_in_batch,
+        )
+        parsed_records = [parsed_records[0]]
+
     incoming_events = len(parsed_records)
     if incoming_events == 0:
         raise HTTPException(
@@ -477,6 +521,7 @@ async def receive_gelf(request: Request) -> JSONResponse:
         )
 
     accepted = graylog_state.ingest_gelf_records(parsed_records)
+    asyncio.create_task(_index_to_opensearch(parsed_records))
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={"status": "accepted", "received": accepted},

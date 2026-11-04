@@ -87,7 +87,6 @@ class PerClientRateLimiter:
         bucket_key = self._to_bucket_key(identity)
 
         with self._lock:
-            # Periodic cleanup of idle identities
             if current_time - self._last_cleanup > self.cleanup_interval_seconds:
                 self._prune_idle_clients(current_time)
 

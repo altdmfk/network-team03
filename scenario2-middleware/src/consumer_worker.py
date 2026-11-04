@@ -694,7 +694,6 @@ class GraylogConsumerWorker:
             max_backoff_seconds=max_backoff,
         )
 
-    # Backup of the original single-destination delivery method
     def _deliver_batch_with_backoff_single(
         self,
         gelf_batch: List[Dict[str, Any]],
@@ -754,7 +753,6 @@ class GraylogConsumerWorker:
         6. Marks batch confirmed and synchronously commits exact per-partition `max_offset + 1` offsets (unless ABORTED)
         7. Updates cross-process SQLite metrics and triggers DLQ auto-replay on healthy delivery
         """
-        # Poison message detection
         valid_messages: List[Message] = []
         poison_messages: List[Tuple[Message, str]] = []
         for msg in messages:

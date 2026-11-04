@@ -55,5 +55,4 @@ def generate_hmac_signature_headers(
     }
 
 
-# Convenient alias
 generate_hmac_auth_headers = generate_hmac_signature_headers

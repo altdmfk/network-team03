@@ -264,7 +264,6 @@ class SecurityLogEvent(BaseModel):
             raw = value.strip()
             if not raw:
                 return round(time.time(), 3)
-            # Check if numeric string first
             try:
                 ts = float(raw)
                 if ts > 1e11:
@@ -470,7 +469,6 @@ class WalLogBufferingMiddleware:
         self.admin_client = AdminClient(admin_conf, db_path=BROKER_DB_PATH)
         self._ensure_topic_exists()
 
-        # Zero-loss Producer configuration
         producer_conf = {
             "client.id": "soar-http-ingestor-producer",
             "acks": "all",
@@ -866,7 +864,6 @@ class WalLogBufferingMiddleware:
         ]
         all_topic_partitions = standard_partitions + priority_partitions
 
-        # 1. Fetch committed offsets for the Graylog Consumer Worker group across both topics
         committed_map: Dict[Tuple[str, int], int] = {}
         has_priority_in_group = True
         try:
@@ -900,7 +897,6 @@ class WalLogBufferingMiddleware:
             for tp in all_topic_partitions:
                 committed_map[(tp.topic, tp.partition)] = 0
 
-        # 2. Fetch live (low, high) watermark offsets per partition from the broker
         total_high_watermark = 0
         total_committed = 0
         total_broker_lag = 0
@@ -1367,7 +1363,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Register RFC 7807 Problem Details global exception handlers
 register_problem_handlers(app)
 
 
@@ -1858,7 +1853,6 @@ async def reset_pipeline_metrics(
     return {"status": "reset"}
 
 
-# Include v1 router in FastAPI application
 app.include_router(v1_router)
 
 
