@@ -31,24 +31,6 @@
         <p class="admin-help">여러 IP는 쉼표·줄바꿈으로 구분합니다. 차단된 IP는 접근할 수 없습니다.</p>
       </form>
     </section>
-    <section id="scenario-management" class="panel write-panel bait-management-panel">
-      <div class="section-title"><div><h2>시나리오 관리</h2><p class="admin-help">시나리오 1 · 허니토큰</p></div><button class="admin-action" type="submit" form="s1-seed-form">미끼 심기</button></div>
-      <p class="admin-help">미끼 계정은 회원 목록에서 일반 회원과 구분되지 않으며, 로그인은 항상 일반 실패 화면으로 응답합니다.
-        탐지 {{ s1.hits }}건 · 차단 {{ s1.blocked }}건{% if s1.last %} · 최근 {{ s1.last.id }} (<code>{{ s1.last.ip }}</code>){% endif %}</p>
-      <div class="table-scroll"><table class="ticket-table admin-table">
-        <thead><tr><th>미끼</th><th>계정</th><th>상태</th><th>처음 사용</th></tr></thead>
-        <tbody>{% for t in s1.tokens %}<tr>
-          <td>{{ t.token_id }}</td><td><code>{{ t.token_value }}</code></td>
-          <td><span class="status {{ 'warning' if t.status == 'used' else 'normal' }}">{{ {'active': '대기', 'used': '사용됨', 'revoked': '회수됨'}.get(t.status, t.status) }}</span></td>
-          <td>{{ t.used_at|display_time if t.used_at else '-' }}{% if t.used_by_ip %} · <code>{{ t.used_by_ip }}</code>{% endif %}</td>
-        </tr>{% else %}<tr><td colspan="4" class="empty-state">심어 둔 미끼가 없습니다.</td></tr>{% endfor %}</tbody>
-      </table></div>
-      <div class="key-issue-panel"><form id="s1-seed-form" method="post" action="{{ url_for('admin_honeytoken_seed') }}">{{ csrf() }}
-        <label for="s1-token-id">미끼 번호</label><input id="s1-token-id" name="token_id" maxlength="20" placeholder="예: HT-002" required>
-        <label for="s1-username">계정 이름</label><input id="s1-username" name="username" maxlength="50" placeholder="예: svc_backup" required>
-        <p class="admin-help">이미 있는 계정 이름이면 덮어쓰지 않고 안내만 합니다.</p>
-      </form></div>
-    </section>
   </div>
   <details id="members" data-persist-accordion class="panel dashboard-accordion admin-list" open>
     <summary>

@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EngineSquare</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20261104-logo2') }}">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="mark">E</span>EngineSquare</div>
+    <a class="brand" href="{{ url_for('index') }}" aria-label="EngineSquare 홈"><span class="brand-icon" aria-hidden="true" style="position:relative;display:block;flex:0 0 42px;width:42px;height:48px;overflow:hidden"><img width="250" height="83" style="position:absolute;width:250px;max-width:none;height:auto;left:-10px;top:-14px" src="{{ url_for('static', filename='enginesquare-logo.png') }}" alt=""></span><span class="brand-wordmark">Engine<span>Square</span></span></a>
     <nav class="nav-links" aria-label="계정 메뉴">
       {% if session.get('user') %}
         <a href="{{ url_for('dashboard') }}">대시보드</a>
@@ -35,10 +35,9 @@
       <h2>시나리오별 보안 관제</h2>
       <p>분산된 공격 흐름을 하나의 보안 관제 흐름으로 연결합니다.</p>
       <div class="scenario-grid">
-        <article class="scenario-card selected" onclick="selectScenario(this)"><small>SCENARIO 01</small><h3>허니토큰 기만 탐지</h3><p>미끼 계정·토큰 접근을 탐지하고 공격 IP를 자동 차단합니다.</p></article>
-        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 02</small><h3>로그 버퍼링</h3><p>대량 로그를 큐에 버퍼링하고 탐지 시스템으로 안정적으로 전달합니다.</p></article>
-        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 03</small><h3>유출 API 키 탐지</h3><p>비허용 IP의 키 사용을 탐지하고 키 교체와 IP 차단을 수행합니다.</p></article>
-        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 04</small><h3>킬체인 상관분석</h3><p>정찰·키 악용·IoT 공격을 연관 분석하고 차단과 장치 잠금을 수행합니다.</p></article>
+        <article class="scenario-card selected" onclick="selectScenario(this)"><small>SCENARIO 01</small><h3>로그 버퍼링 Middleware</h3><p>대량 로그를 큐에 버퍼링하고 탐지 시스템으로 안정적으로 전달합니다.</p></article>
+        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 02</small><h3>유출 API 키 탐지</h3><p>비허용 IP의 키 사용을 탐지하고 키 교체와 IP 차단을 수행합니다.</p></article>
+        <article class="scenario-card" onclick="selectScenario(this)"><small>SCENARIO 03</small><h3>킬체인 상관분석</h3><p>정찰·키 악용·IoT 공격을 연관 분석하고 차단과 장치 잠금을 수행합니다.</p></article>
       </div>
     </section>
   </main>

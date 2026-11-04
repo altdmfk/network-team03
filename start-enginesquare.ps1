@@ -39,6 +39,12 @@ $logDir = Join-Path $PSScriptRoot '.runtime-logs'
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 $children = @()
 try {
+    # Start the follower before the API so startup requests are not missed.
+    $children += Start-Process -FilePath $pythonExe `
+        -ArgumentList '-u', 'scenario3-api-key-compromised/wazuh/forward_api_logs.py' `
+        -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $logDir 'wazuh.out.log') `
+        -RedirectStandardError (Join-Path $logDir 'wazuh.err.log')
     foreach ($server in @(@{Name='web'; Directory='web-app'}, @{Name='api'; Directory='.'})) {
         $children += Start-Process -FilePath $pythonExe -ArgumentList '-u', 'app.py' `
             -WorkingDirectory (Join-Path $PSScriptRoot $server.Directory) `
@@ -47,8 +53,13 @@ try {
             -RedirectStandardError (Join-Path $logDir ($server.Name + '.err.log'))
     }
     Write-Host 'Web: http://127.0.0.1:5001/   API: http://127.0.0.1:5000/health'
-    Write-Host "Server logs: $logDir (check these if startup fails). Docker/MySQL/Middleware must already be running."
-    Read-Host 'Press Enter to stop both launched servers' | Out-Null
+    Write-Host 'Wazuh API log forwarding is also launched (new events only).'
+    Write-Host "Logs: $logDir (including wazuh.out.log / wazuh.err.log). Docker/MySQL/Middleware/Wazuh must already be running."
+    Start-Sleep -Seconds 1
+    foreach ($child in $children) {
+        if ($child.HasExited) { throw "A launched process exited. Check logs in $logDir" }
+    }
+    Read-Host 'Press Enter to stop API, Web and Wazuh forwarding' | Out-Null
 }
 finally {
     foreach ($child in $children) {

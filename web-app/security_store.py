@@ -182,7 +182,7 @@ class SecurityStore:
                 cursor.execute("INSERT INTO incident_tickets (id,title,ip,api_key_id,scenario,event,occurrence_count,action,status,severity,severity_class,created_at,closed_at) "
                                "VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s,%s,%s,%s,'-') "
                                "ON DUPLICATE KEY UPDATE occurrence_count=occurrence_count+1",
-                               (identifier, "비허용 IP의 API 키 사용" if event.get("detection_reason") == "not_allowed_ip" else "API 키 이상 요청 탐지", event["client_ip"], event["api_key_id"], "시나리오 3",
+                               (identifier, "비허용 IP의 API 키 사용" if event.get("detection_reason") == "not_allowed_ip" else "API 키 이상 요청 탐지", event["client_ip"], event["api_key_id"], "시나리오 2",
                                 "api_key_compromised", "요청 차단", "열림", "높음", "high", event["timestamp"]))
                 cursor.execute("INSERT INTO security_events (event_type,incident_id,api_key_id,client_ip,severity,status,decision,action,reason,event_timestamp,created_at,origin,alert_requested) "
                                "VALUES (%s,%s,%s,%s,'높음','열림','거부','요청 차단',%s,%s,%s,'api',%s)",
@@ -256,7 +256,7 @@ class SecurityStore:
                 if not duplicate:
                     cursor.execute("INSERT INTO incident_tickets "
                                    "(id,title,ip,api_key_id,scenario,event,occurrence_count,action,status,severity,severity_class,created_at,closed_at) "
-                                   "VALUES (%s,'킬체인 상관분석 CRITICAL',%s,'','시나리오 4','killchain_critical',1,%s,'열림','높음','high',%s,'-') "
+                                   "VALUES (%s,'킬체인 상관분석 CRITICAL',%s,'','시나리오 3','killchain_critical',1,%s,'열림','높음','high',%s,'-') "
                                    "ON DUPLICATE KEY UPDATE occurrence_count=occurrence_count+1,action=VALUES(action)",
                                    (identifier, event["client_ip"], event["action"], event["timestamp"]))
                     cursor.execute("INSERT INTO security_events "
@@ -368,38 +368,3 @@ class SecurityStore:
             except Exception:
                 connection.rollback()
                 raise
-
-    # ── 시나리오 1(허니토큰) 탐지 쪽 — 티켓·이벤트·차단은 respond_honeytoken(n8n → 공용 API)이 담당 ──
-    def initialize_honeytokens(self):
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("""CREATE TABLE IF NOT EXISTS honeytokens (
-                token_id VARCHAR(20) PRIMARY KEY,
-                token_type VARCHAR(20) NOT NULL,
-                token_value VARCHAR(100) NOT NULL UNIQUE,
-                placement VARCHAR(50),
-                status VARCHAR(10) NOT NULL DEFAULT 'active',
-                created_at VARCHAR(64) NOT NULL,
-                used_at VARCHAR(64),
-                used_by_ip VARCHAR(64)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
-
-    def find_honeytoken_account(self, username):
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM honeytokens WHERE token_value=%s AND token_type='account' "
-                           "AND status<>'revoked'", (username,))
-            return cursor.fetchone()
-
-    def mark_honeytoken_used(self, token, ip):
-        """미끼의 첫 사용 시각·IP만 기록한다(이미 used면 그대로 둠)."""
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("UPDATE honeytokens SET status='used', used_at=%s, used_by_ip=%s "
-                           "WHERE token_id=%s AND status='active'", (timestamp(), ip, token["token_id"]))
-
-    def honeytoken_overview(self):
-        with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM honeytokens ORDER BY token_id")
-            tokens = cursor.fetchall()
-            cursor.execute("SELECT t.*, b.blocked_at FROM incident_tickets t LEFT JOIN blocked_ips b ON b.ip=t.ip "
-                           "WHERE t.event='honeytoken_used' ORDER BY t.created_at DESC")
-            tickets = cursor.fetchall()
-        return tokens, tickets
