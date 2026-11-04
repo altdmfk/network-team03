@@ -92,7 +92,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "={{ $env.DISCORD_BOT_TOKEN ? ($env.DISCORD_BOT_TOKEN.startsWith('Bot ') ? $env.DISCORD_BOT_TOKEN : 'Bot ' + $env.DISCORD_BOT_TOKEN) : 'Bot <DISCORD_BOT_TOKEN>' }}"
+              "value": "Bot <DISCORD_BOT_TOKEN>"
             },
             {
               "name": "Content-Type",
@@ -102,7 +102,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  embeds: [\n    {\n      title: '🚨 Brute Force 탐지',\n      color: 1,\n      fields: [\n        {\n          name: '공격 IP',\n          value: String($('Normalize Brute Force Event').item.json.client_ip || '10.0.0.99'),\n          inline: true\n        },\n        {\n          name: '인시던트 ID',\n          value: String($('Block Attacker IP').item.json.incident_id || $('Block Attacker IP').item.json.incident?.incident_id || 'INC-S2-BRUTEFORCE'),\n          inline: true\n        },\n        {\n          name: '탐지 사유',\n          value: String($('Normalize Brute Force Event').item.json.detection_reason || '1분 내 로그인 5회 이상 실패'),\n          inline: false\n        },\n        {\n          name: '대응 결과',\n          value: 'IP 차단: ' + (($('Block Attacker IP').item.json.ip_blocked === true || $('Block Attacker IP').item.json.status === 'ok' || Boolean($('Block Attacker IP').item.json.incident)) ? '완료' : '진행 중'),\n          inline: false\n        }\n      ],\n      footer: {\n        text: 'EngineSquare · 시나리오 1'\n      }\n    }\n  ],\n  components: [\n    {\n      type: 1,\n      components: [\n        {\n          type: 2,\n          style: 5,\n          label: '실시간 대시보드 열기',\n          emoji: {\n            name: '📊'\n          },\n          url: $env.DASHBOARD_URL || 'http://127.0.0.1:5001/dashboard'\n        }\n      ]\n    }\n  ]\n}) }}",
+        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"🚨 Brute Force 탐지\",\n      \"color\": 1,\n      \"fields\": [\n        {\n          \"name\": \"공격 IP\",\n          \"value\": \"{{ $('Normalize Brute Force Event1').item.json.client_ip || '10.0.0.99' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"인시던트 ID\",\n          \"value\": \"{{ $('Block Attacker IP1').item.json.incident_id || $('Block Attacker IP1').item.json.incident?.incident_id || 'INC-S2-BRUTEFORCE' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"탐지 사유\",\n          \"value\": \"{{ $('Normalize Brute Force Event1').item.json.detection_reason || '1분 내 로그인 5회 이상 실패' }}\",\n          \"inline\": false\n        },\n        {\n          \"name\": \"대응 결과\",\n          \"value\": \"IP 차단: {{ ($('Block Attacker IP1').item.json.ip_blocked === true || $('Block Attacker IP1').item.json.status === 'ok' || Boolean($('Block Attacker IP1').item.json.incident)) ? '완료' : '진행 중' }}\",\n          \"inline\": false\n        }\n      ],\n      \"footer\": {\n        \"text\": \"EngineSquare · 시나리오 1\"\n      }\n    }\n  ],\n  \"components\": [\n    {\n      \"type\": 1,\n      \"components\": [\n        {\n          \"type\": 2,\n          \"style\": 5,\n          \"label\": \"실시간 대시보드 열기\",\n          \"emoji\": {\n            \"name\": \"📊\"\n          },\n          \"url\": \"http://127.0.0.1:5001/dashboard\"\n        }\n      ]\n    }\n  ]\n}",
         "options": {}
       },
       "id": "scenario2-discord-bot",
