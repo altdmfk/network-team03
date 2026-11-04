@@ -916,12 +916,10 @@ class TestFastAPIEndpointsAndMockGraylog:
         )
 
         with TestClient(ingestor.app) as client:
-            # 1. GET /health
             health_resp = client.get("/health")
             assert health_resp.status_code == 200
             assert health_resp.json()["status"] == "healthy"
 
-            # 2. POST /ingest (single event)
             single_resp = client.post("/ingest", json=sample_event_dict())
             assert single_resp.status_code == 202
             single_data = single_resp.json()
@@ -929,7 +927,6 @@ class TestFastAPIEndpointsAndMockGraylog:
             assert single_data["partition_key"] == "10.0.0.99"
             assert single_data["total_received"] == 1
 
-            # 3. POST /ingest/batch (wrapped {"logs": [...]} and raw list [...])
             batch_resp = client.post(
                 "/ingest/batch",
                 json={
@@ -951,7 +948,6 @@ class TestFastAPIEndpointsAndMockGraylog:
             assert raw_list_resp.json()["accepted"] == 1
             assert raw_list_resp.json()["total_received"] == 4
 
-            # 4. GET /metrics (verifies peak_queue_lag, throughput_telemetry, and broker_telemetry)
             test_store.increment_forwarded(1, flush=True)
             metrics_resp = client.get("/metrics")
             assert metrics_resp.status_code == 200
@@ -981,7 +977,6 @@ class TestFastAPIEndpointsAndMockGraylog:
             assert drained_data["peak_queue_lag"] == 3
             assert drained_data["throughput_telemetry"]["outbound_eps"] >= 4.0
 
-            # 5. POST /metrics/reset resets all counters, peak lag, and EPS back to 0
             reset_resp = client.post("/metrics/reset")
             assert reset_resp.status_code == 200
             assert reset_resp.json() == {"status": "reset"}
@@ -1003,12 +998,10 @@ class TestFastAPIEndpointsAndMockGraylog:
             reset_resp = client.post("/reset")
             assert reset_resp.status_code == 200
 
-            # 1. Enable HTTP 503 simulated outage
             on_resp = client.post("/outage/on")
             assert on_resp.status_code == 200
             assert on_resp.json()["outage_mode"] is True
 
-            # Verify /gelf returns 503 during outage
             step1_gelf = transform_to_gelf(
                 sample_event_dict(
                     timestamp=1760875200.100,
@@ -1024,12 +1017,10 @@ class TestFastAPIEndpointsAndMockGraylog:
             assert outage_gelf_resp.status_code == 503
             assert outage_gelf_resp.json()["rejected_503_batches"] == 1
 
-            # 2. Disable HTTP 503 simulated outage
             off_resp = client.post("/outage/off")
             assert off_resp.status_code == 200
             assert off_resp.json()["outage_mode"] is False
 
-            # 3. Send Kill-Chain sequence for 10.0.0.99 + Honeytoken alert as NDJSON batch
             step2_gelf = transform_to_gelf(
                 sample_event_dict(
                     timestamp=1760875200.200,
@@ -1066,11 +1057,10 @@ class TestFastAPIEndpointsAndMockGraylog:
             assert ok_resp.status_code == 202
             assert ok_resp.json() == {"status": "accepted", "received": 4}
 
-            # 4. Send the exact same NDJSON batch a second time (simulating HTTP timeout retry)
+            # Simulating HTTP timeout retry
             dup_resp = client.post("/gelf", content=ndjson_body.encode("utf-8"))
             assert dup_resp.status_code == 202
 
-            # 5. Verify /status Kill-Chain chronological ordering, Honeytoken count & _event_id deduplication
             status_resp = client.get("/status")
             assert status_resp.status_code == 200
             report = status_resp.json()

@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}EngineSquare{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20261104-logo2') }}">
   <script src="{{ url_for('static', filename='lists.js') }}" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ url_for('index') }}"><span class="mark">E</span>EngineSquare</a>
+    <a class="brand" href="{{ url_for('index') }}" aria-label="EngineSquare 홈"><span class="brand-icon" aria-hidden="true" style="position:relative;display:block;flex:0 0 42px;width:42px;height:48px;overflow:hidden"><img width="250" height="83" style="position:absolute;width:250px;max-width:none;height:auto;left:-10px;top:-14px" src="{{ url_for('static', filename='enginesquare-logo.png') }}" alt=""></span><span class="brand-wordmark">Engine<span>Square</span></span></a>
     <nav class="nav-links" aria-label="주 메뉴">
       <a href="{{ url_for('dashboard') }}">대시보드</a>
       <a href="{{ url_for('board') }}">게시판</a>

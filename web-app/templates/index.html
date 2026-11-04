@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EngineSquare</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20261104-logo2') }}">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="mark">E</span>EngineSquare</div>
+    <a class="brand" href="{{ url_for('index') }}" aria-label="EngineSquare 홈"><span class="brand-icon" aria-hidden="true" style="position:relative;display:block;flex:0 0 42px;width:42px;height:48px;overflow:hidden"><img width="250" height="83" style="position:absolute;width:250px;max-width:none;height:auto;left:-10px;top:-14px" src="{{ url_for('static', filename='enginesquare-logo.png') }}" alt=""></span><span class="brand-wordmark">Engine<span>Square</span></span></a>
     <nav class="nav-links" aria-label="계정 메뉴">
       {% if session.get('user') %}
         <a href="{{ url_for('dashboard') }}">대시보드</a>

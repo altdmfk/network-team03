@@ -169,7 +169,6 @@ class TestContiguousOffsets:
         producer = LightweightProducer(db_path=temp_db_path)
         storage = SQLiteBrokerStorage(temp_db_path)
 
-        # Explicitly produce to partition 0
         for i in range(25):
             producer.produce(
                 topic="security-logs",
@@ -179,7 +178,6 @@ class TestContiguousOffsets:
 
         producer.flush()
 
-        # Fetch all messages directly from partition 0
         messages = storage.fetch_messages_batch("security-logs", 0, start_offset=0, limit=50)
         assert len(messages) == 25
 
@@ -187,7 +185,6 @@ class TestContiguousOffsets:
         expected_offsets = list(range(25))
         assert offsets == expected_offsets
 
-        # Verify _event_id generation matches "{partition}:{offset}"
         event_ids = [f"{m.partition()}:{m.offset()}" for m in messages]
         assert event_ids[0] == "0:0"
         assert event_ids[-1] == "0:24"
@@ -235,7 +232,6 @@ class TestPauseResumeZeroLoss:
         )
         consumer.subscribe(["security-logs"])
 
-        # Produce messages to all 3 partitions
         for p in range(3):
             for i in range(5):
                 producer.produce(
@@ -248,7 +244,6 @@ class TestPauseResumeZeroLoss:
         assigned = consumer.assignment()
         assert len(assigned) == 3
 
-        # Pause ALL assigned partitions
         consumer.pause(assigned)
 
         # Call poll(0) multiple times: MUST return None and NEVER dequeue
@@ -256,7 +251,6 @@ class TestPauseResumeZeroLoss:
             msg = consumer.poll(timeout=0)
             assert msg is None, "poll(0) returned a message while partitions were paused!"
 
-        # Resume ONLY partition 1
         tp1 = TopicPartition("security-logs", 1)
         consumer.resume([tp1])
 
@@ -273,7 +267,6 @@ class TestPauseResumeZeroLoss:
         # Further polls should return None since partition 0 and 2 are still paused
         assert consumer.poll(timeout=0) is None
 
-        # Resume partitions 0 and 2
         tp0 = TopicPartition("security-logs", 0)
         tp2 = TopicPartition("security-logs", 2)
         consumer.resume([tp0, tp2])
@@ -288,7 +281,6 @@ class TestPauseResumeZeroLoss:
         assert len(remaining_messages) == 10
         assert {m.partition() for m in remaining_messages} == {0, 2}
 
-        # Queue is now empty
         assert consumer.poll(timeout=0) is None
 
         producer.close()
@@ -308,7 +300,6 @@ class TestWatermarkAndLagCalculation:
         )
         tp = TopicPartition("security-logs", 0)
 
-        # Empty partition
         low, high = consumer.get_watermark_offsets(tp)
         assert low == 0
         assert high == 0
@@ -317,7 +308,6 @@ class TestWatermarkAndLagCalculation:
         committed_tp = consumer.committed([tp])[0]
         assert committed_tp.offset == OFFSET_INVALID
 
-        # Produce 12 messages to partition 0
         for i in range(12):
             producer.produce("security-logs", partition=0, value=f'{{"i": {i}}}')
         producer.flush()
@@ -326,16 +316,13 @@ class TestWatermarkAndLagCalculation:
         assert low == 0
         assert high == 12
 
-        # Commit offset 5
         consumer.commit([TopicPartition("security-logs", 0, offset=5)])
         committed_tp = consumer.committed([tp])[0]
         assert committed_tp.offset == 5
 
-        # Calculate lag
         lag = high - committed_tp.offset
         assert lag == 7
 
-        # Commit all (offset 12)
         consumer.commit([TopicPartition("security-logs", 0, offset=12)])
         committed_tp = consumer.committed([tp])[0]
         assert committed_tp.offset == 12
@@ -359,16 +346,13 @@ class TestWatermarkAndLagCalculation:
             producer.produce("security-logs", partition=0, value=f'{{"i": {i}}}')
         producer.flush()
 
-        # Poll 4 messages (offsets 0, 1, 2, 3)
         for expected_offset in range(4):
             m = consumer.poll(timeout=0.2)
             assert m is not None
             assert m.offset() == expected_offset
 
-        # Seek back to offset 1
         consumer.seek(TopicPartition("security-logs", 0, offset=1))
 
-        # Next poll should re-read offset 1
         m = consumer.poll(timeout=0.2)
         assert m is not None
         assert m.offset() == 1
@@ -404,7 +388,6 @@ class TestBoundedQueueAndBackpressure:
             max_unconsumed_lag=5,
         )
 
-        # Produce 5 messages without any consumer committing
         for i in range(5):
             producer.produce("security-logs", value=f'{{"i": {i}}}')
         producer.flush()
@@ -413,7 +396,6 @@ class TestBoundedQueueAndBackpressure:
         with pytest.raises(BufferError):
             producer.produce("security-logs", value=b'{"i": 6}')
 
-        # Consume and commit to relieve backpressure
         consumer = LightweightConsumer(
             db_path=temp_db_path,
             group_id="backpressure-consumer",
@@ -424,10 +406,8 @@ class TestBoundedQueueAndBackpressure:
         assert len(msgs) == 5
         consumer.commit()
 
-        # Refresh producer's cached lag after consumer offset commit
         producer.refresh_unconsumed_lag("security-logs")
 
-        # Now produce should succeed immediately
         producer.produce("security-logs", value=b'{"i": 6}')
         producer.flush()
 
@@ -511,11 +491,9 @@ class TestAdminClientCompatibility:
         admin = LightweightAdminClient(db_path=temp_db_path)
 
         metadata = admin.list_topics()
-        # Default topics should exist
         assert "security-logs" in metadata.topics
         assert "security-logs.priority" in metadata.topics
 
-        # Create new topic
         new_topic = NewTopic(topic="custom-audit-logs", num_partitions=4)
         futures = admin.create_topics([new_topic])
         res = futures["custom-audit-logs"].result()
@@ -527,12 +505,10 @@ class TestAdminClientCompatibility:
             dup_futures["custom-audit-logs"].result()
         assert exc_info.value.args()[0].code() == BrokerError.TOPIC_ALREADY_EXISTS
 
-        # Alter configs mock
         resource = ConfigResource(ResourceType.TOPIC, "custom-audit-logs", {"retention.ms": "86400000"})
         alter_res = admin.alter_configs([resource])
         assert alter_res[resource].result() is None
 
-        # Inspect consumer group offsets
         group_req = [ConsumerGroupTopicPartitions("admin-test-group", [TopicPartition("custom-audit-logs", 0)])]
         offset_futures = admin.list_consumer_group_offsets(group_req)
         group_res = offset_futures["admin-test-group"].result()

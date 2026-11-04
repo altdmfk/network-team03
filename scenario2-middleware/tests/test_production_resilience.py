@@ -24,7 +24,6 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-# Ensure scenario2-middleware paths are resolved
 _test_dir = Path(__file__).resolve().parent
 _root_dir = _test_dir.parent
 for p in [str(_root_dir / "src"), str(_root_dir / "simulators"), str(_root_dir)]:
@@ -54,15 +53,12 @@ class TestDeepHealthcheck:
         resp = client.get("/v1/health")
         assert resp.status_code == 200
         data = resp.json()
-        # Verify backward compatibility
         assert data["status"] == "healthy"
         assert data["topic"] == BROKER_TOPIC
         assert data["partitions"] == BROKER_PARTITIONS
         assert "in_flight_producer_messages" in data
-        # Verify deep healthcheck enhancement fields
         assert data["storage"] == "healthy"
         assert data["wal_writable"] is True
-        # Verify no Deprecation header on v1
         assert "Deprecation" not in resp.headers
 
     def test_legacy_health_normal_returns_200_and_deprecation_header(self) -> None:
@@ -309,14 +305,12 @@ class TestSafeSecurityLogClient:
             # Wait for background worker to attempt deliveries
             client.flush(timeout=2.0)
 
-            # Circuit must be OPEN
             assert client.state == "OPEN"
             assert client.consecutive_failures >= 3
 
             # Any subsequent log must be directly appended to fallback file
             client.send_log({"event_index": 99, "client_ip": "10.0.0.99"})
 
-            # Verify fallback file contents
             assert os.path.exists(fallback_file)
             with open(fallback_file, "r", encoding="utf-8") as f:
                 lines = [json.loads(line) for line in f if line.strip()]
@@ -421,7 +415,6 @@ class TestMockGraylogLatencyTelemetry:
         r2 = client.post("/gelf", content=prio_batch.encode("utf-8"))
         assert r2.status_code == 202
 
-        # Query GET /status
         resp = client.get("/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -461,7 +454,6 @@ class TestMockGraylogLatencyTelemetry:
         s_before = client.get("/status").json()
         assert s_before["latency_telemetry"]["standard_lane"]["count"] == 1
 
-        # Reset
         r_reset = client.post("/reset")
         assert r_reset.status_code == 200
 
