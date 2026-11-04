@@ -53,16 +53,18 @@
 │  - 워크플로우: Scenario 2 - Middleware Brute Force Response  │
 │  - 공격자 IP (10.0.0.99) 및 탐지 사유 파싱                   │
 │  - 차단 API 호출: POST /automation/revoke-key               │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ (4) IP 차단 및 API 키 폐기 요청
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│  웹 애플리케이션 (:5000 / :5001)                            │
-│                                                             │
-│  - MySQL blocked_ips 테이블에 공격자 IP (10.0.0.99) 등록    │
-│  - 후속 요청에 대해 HTTP 403 Forbidden 즉시 반환            │
-│  - 관제 대시보드(:5001/dashboard)에 인시던트 티켓 등록      │
-└─────────────────────────────────────────────────────────────┘
+│  - 디스코드 봇 실시간 알림 전송 (임베드 및 버튼 링크 포함)    │
+│  - Graylog 응답 반환                                        │
+└──────────────┬──────────────────────────────┬───────────────┘
+               │ (4) IP 차단 및 API 키 폐기 요청 │ (5) 봇 알림 전송 (버튼 포함)
+               ▼                              ▼
+┌──────────────────────────────┐ ┌─────────────────────────────┐
+│  웹 애플리케이션 (:5000 /:5001)│ │ Discord 채널 (#메신저-알림)  │
+│                              │ │                             │
+│  - MySQL blocked_ips 등록    │ │ - 침해사고 긴급 임베드 알림 │
+│  - HTTP 403 차단 격리        │ │ - [📊 실시간 대시보드 열기] │
+│  - 관제 대시보드 티켓 등록   │ │   Link 버튼 연동            │
+└──────────────────────────────┘ └─────────────────────────────┘
 ```
 
 ---
@@ -188,11 +190,17 @@ Graylog가 내부망의 n8n 웹훅 엔드포인트로 HTTP 요청을 보낼 수 
 2. 좌측 Workflows 메뉴로 이동한 뒤 우측 상단 메뉴에서 Import from File을 선택합니다.
 3. [`scenario2_bruteforce_response_workflow.json`](./n8n/scenario2_bruteforce_response_workflow.json) 파일을 업로드합니다.
 4. 워크플로우 노드 구성을 확인합니다.
-   - Webhook: `POST /webhook/scenario2-bruteforce` 수신
-   - Normalize: 이벤트 페이로드에서 `client_ip` 추출
-   - Block Attacker IP: `{{ $env.AUTOMATION_WEBHOOK_BASE_URL || 'http://host.docker.internal:5000' }}/automation/revoke-key`를 호출하여 MySQL `blocked_ips` 테이블에 공격자 IP 등록
-   - Format Alert: 알림 메시지 포맷 생성
-5. 우측 상단 토글을 Active 상태로 전환하여 자동 실행을 활성화합니다.
+   - **Scenario 2 Webhook**: `POST /webhook/scenario2-bruteforce` 수신
+   - **Normalize Brute Force Event**: 이벤트 페이로드에서 `client_ip`, `detection_reason` 등 정규화
+   - **Block Attacker IP**: `{{ $env.AUTOMATION_WEBHOOK_BASE_URL || 'http://host.docker.internal:5000' }}/automation/revoke-key`를 호출하여 MySQL `blocked_ips` 테이블에 공격자 IP 등록 및 티켓 생성
+   - **Format Alert Message**: 텍스트 알림 포맷 구성
+   - **Send Discord Notification**: Discord Bot REST API(`https://discord.com/api/v10/channels/1567368969524879513/messages`)로 리치 임베드 및 `[📊 실시간 대시보드 열기]` 링크 버튼(`style: 5`) 전송
+   - **Respond to Graylog**: Graylog에 성공 결과 반환
+5. Discord Bot 인증 방식 설정:
+   - 보안을 위해 Git 저장소 및 워크플로우 파일에는 실제 봇 토큰을 평문으로 남기지 않습니다.
+   - **n8n Credential로 등록할 경우 (권장)**: HTTP Request 노드(`Send Discord Notification`) → Authentication: `Generic Credential Type` → `Header Auth` 선택 후 Name: `Authorization`, Value: `Bot {전달받은_봇_토큰}`을 등록합니다.
+   - **환경 변수로 전달할 경우**: n8n 컨테이너 실행 환경 변수에 `DISCORD_BOT_TOKEN={전달받은_봇_토큰}`을 지정하면 자동으로 `Authorization: Bot {토큰}` 헤더가 주입됩니다.
+6. 우측 상단 토글을 Active 상태로 전환하여 자동 실행을 활성화합니다.
 
 ---
 
