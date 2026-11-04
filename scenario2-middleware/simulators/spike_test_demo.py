@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import sys
 import time
 from typing import Any, Dict, List, Optional
@@ -22,14 +23,24 @@ for _p in [os.path.join(_mid_root, "src"), _sim_dir, _mid_root]:
 
 from config import (
     HONEYTOKEN_LATENCY_BUDGET,
+    INGEST_API_KEYS,
     INGESTOR_BASE_URL,
     BROKER_PRIORITY_TOPIC,
     KILL_CHAIN_TARGET_IP,
     MAX_LOGS_PER_SEC,
     MOCK_GRAYLOG_BASE_URL,
 )
+from auth_helper import generate_hmac_signature_headers
 
-KILL_CHAIN_IP = KILL_CHAIN_TARGET_IP
+ATTACKER_IP = os.environ.get("ATTACKER_IP", KILL_CHAIN_TARGET_IP)
+KILL_CHAIN_IP = ATTACKER_IP
+HONEYTOKEN_IP = os.environ.get("HONEYTOKEN_IP", "172.16.42.108")
+NORMAL_SUBNET_PREFIX = os.environ.get("NORMAL_SUBNET_PREFIX", "192.168.10")
+DEFAULT_INGEST_KEY = (
+    os.environ.get("INGEST_API_KEY")
+    or os.environ.get("MIDDLEWARE_API_KEY")
+    or (INGEST_API_KEYS[0] if INGEST_API_KEYS else "prod-ingest-key-1")
+)
 INGESTOR_BASE_URL = os.environ.get("INGESTOR_BASE_URL", INGESTOR_BASE_URL.replace("localhost", "127.0.0.1"))
 MOCK_GRAYLOG_BASE_URL = os.environ.get("MOCK_GRAYLOG_BASE_URL", MOCK_GRAYLOG_BASE_URL.replace("localhost", "127.0.0.1"))
 
@@ -42,16 +53,19 @@ def build_progress_bar(current: int, total: int, width: int = 24) -> str:
     return "[" + ("#" * filled) + ("-" * (width - filled)) + f"] {ratio * 100:5.1f}%"
 
 
-async def inject_kill_chain_sequence(client: httpx.AsyncClient) -> int:
+async def inject_kill_chain_sequence(
+    client: httpx.AsyncClient, attacker_ip: Optional[str] = None
+) -> int:
     """
-    Scenario 4: Injects sequential Kill-Chain logs from attacker IP 10.0.0.99
+    Scenario 4: Injects sequential Kill-Chain logs from attacker IP
     (PORT_SCAN -> BRUTE_FORCE -> IOT_CONTROL) with strictly increasing timestamps.
     """
+    target_ip = attacker_ip or ATTACKER_IP
     base_ts = round(time.time(), 3)
     kill_chain_steps = [
         {
             "timestamp": round(base_ts, 3),
-            "client_ip": KILL_CHAIN_IP,
+            "client_ip": target_ip,
             "event_type": "PORT_SCAN",
             "target_resource": "/admin/ports/scan",
             "status_code": 403,
@@ -64,7 +78,7 @@ async def inject_kill_chain_sequence(client: httpx.AsyncClient) -> int:
         },
         {
             "timestamp": round(base_ts + 0.005, 3),
-            "client_ip": KILL_CHAIN_IP,
+            "client_ip": target_ip,
             "event_type": "BRUTE_FORCE",
             "target_resource": "/api/v1/auth/login",
             "status_code": 200,
@@ -78,7 +92,7 @@ async def inject_kill_chain_sequence(client: httpx.AsyncClient) -> int:
         },
         {
             "timestamp": round(base_ts + 0.010, 3),
-            "client_ip": KILL_CHAIN_IP,
+            "client_ip": target_ip,
             "event_type": "IOT_CONTROL",
             "target_resource": "/iot/esp32/relay/facility_gate_unlock",
             "status_code": 200,
@@ -93,18 +107,30 @@ async def inject_kill_chain_sequence(client: httpx.AsyncClient) -> int:
     ]
 
     for step in kill_chain_steps:
-        resp = await client.post(f"{INGESTOR_BASE_URL}/ingest", json=step)
+        body_bytes = json.dumps(
+            step, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            **generate_hmac_signature_headers(DEFAULT_INGEST_KEY, body_bytes),
+        }
+        resp = await client.post(
+            f"{INGESTOR_BASE_URL}/ingest", content=body_bytes, headers=headers
+        )
         resp.raise_for_status()
     return len(kill_chain_steps)
 
 
-async def inject_honeytoken_alert(client: httpx.AsyncClient) -> int:
+async def inject_honeytoken_alert(
+    client: httpx.AsyncClient, honeytoken_ip: Optional[str] = None
+) -> int:
     """
     Scenario 1: Injects a high-priority Honeytoken access event (`honeytoken_admin`).
     """
+    source_ip = honeytoken_ip or HONEYTOKEN_IP
     honeytoken_event = {
         "timestamp": round(time.time(), 3),
-        "client_ip": "172.16.42.108",
+        "client_ip": source_ip,
         "event_type": "HONEYTOKEN_ACCESS",
         "target_resource": "/api/v1/admin/honeytoken_admin/secrets",
         "status_code": 403,
@@ -115,19 +141,32 @@ async def inject_honeytoken_alert(client: httpx.AsyncClient) -> int:
             "action": "export_vault_keys",
         },
     }
-    resp = await client.post(f"{INGESTOR_BASE_URL}/ingest", json=honeytoken_event)
+    body_bytes = json.dumps(
+        honeytoken_event, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        **generate_hmac_signature_headers(DEFAULT_INGEST_KEY, body_bytes),
+    }
+    resp = await client.post(
+        f"{INGESTOR_BASE_URL}/ingest", content=body_bytes, headers=headers
+    )
     resp.raise_for_status()
     return 1
 
 
 async def unleash_traffic_spike(
-    client: httpx.AsyncClient, total_spike_logs: int = 5000, batch_chunk_size: int = 50
+    client: httpx.AsyncClient,
+    total_spike_logs: int = 5000,
+    batch_chunk_size: int = 50,
+    normal_subnet_prefix: Optional[str] = None,
 ) -> int:
     """
     Scenarios 2 & 3: Blasts 5,000 logs (Nmap PORT_SCAN, Hydra BRUTE_FORCE, and
     403 IDOR_ATTEMPT / Leaked API Key calls) concurrently within 1-2 seconds.
     """
-    attacker_pool = [f"192.168.10.{i}" for i in range(10, 90)]
+    subnet = normal_subnet_prefix or NORMAL_SUBNET_PREFIX
+    attacker_pool = [f"{subnet}.{i}" for i in range(10, 90)]
     scenario_templates = [
         (
             "PORT_SCAN",
@@ -182,9 +221,17 @@ async def unleash_traffic_spike(
 
     async def send_chunk(chunk_payload: List[Dict[str, Any]]) -> int:
         async with semaphore:
+            body_bytes = json.dumps(
+                {"logs": chunk_payload}, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json",
+                **generate_hmac_signature_headers(DEFAULT_INGEST_KEY, body_bytes),
+            }
             resp = await client.post(
                 f"{INGESTOR_BASE_URL}/ingest/batch",
-                json={"logs": chunk_payload},
+                content=body_bytes,
+                headers=headers,
             )
             resp.raise_for_status()
             return len(chunk_payload)
@@ -249,9 +296,15 @@ async def run_spike_verification(
     simulate_outage: bool = False,
     timeout_seconds: int = 120,
     honeytoken_latency_budget: float = HONEYTOKEN_LATENCY_BUDGET,
+    attacker_ip: Optional[str] = None,
+    honeytoken_ip: Optional[str] = None,
+    normal_subnet_prefix: Optional[str] = None,
 ) -> None:
     limits = httpx.Limits(max_keepalive_connections=40, max_connections=60)
     timeout = httpx.Timeout(15.0)
+    target_attacker_ip = attacker_ip or KILL_CHAIN_IP
+    target_honeytoken_ip = honeytoken_ip or HONEYTOKEN_IP
+    target_subnet = normal_subnet_prefix or NORMAL_SUBNET_PREFIX
 
     async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
         print("=" * 112)
@@ -293,15 +346,17 @@ async def run_spike_verification(
 
         # 1. Inject Kill-Chain, Bulk-Scan Backlog, and Priority Honeytoken Alert
         print(
-            f"[1/4] Injecting Kill-Chain Sequence for Attacker IP {KILL_CHAIN_IP} (PORT_SCAN -> BRUTE_FORCE -> IOT_CONTROL)..."
+            f"[1/4] Injecting Kill-Chain Sequence for Attacker IP {target_attacker_ip} (PORT_SCAN -> BRUTE_FORCE -> IOT_CONTROL)..."
         )
-        kc_sent = await inject_kill_chain_sequence(client)
+        kc_sent = await inject_kill_chain_sequence(client, attacker_ip=target_attacker_ip)
 
         print(
             f"[2/4] Unleashing Bulk Scan Backlog Spike ({spike_count:,} logs via concurrent HTTP batches)..."
         )
         spike_start = time.perf_counter()
-        spike_sent = await unleash_traffic_spike(client, total_spike_logs=spike_count)
+        spike_sent = await unleash_traffic_spike(
+            client, total_spike_logs=spike_count, normal_subnet_prefix=target_subnet
+        )
         spike_elapsed = time.perf_counter() - spike_start
         print(
             f"      -> Injected {spike_sent:,} scan logs in {spike_elapsed:.2f}s (Backlog generated)."
@@ -311,7 +366,7 @@ async def run_spike_verification(
             "[3/4] Injecting High-Priority Honeytoken Alert behind the scan backlog (account='honeytoken_admin')..."
         )
         ht_send_time = time.perf_counter()
-        ht_sent = await inject_honeytoken_alert(client)
+        ht_sent = await inject_honeytoken_alert(client, honeytoken_ip=target_honeytoken_ip)
 
         total_sent = kc_sent + ht_sent + spike_sent
         total_time = time.perf_counter() - spike_start
@@ -477,7 +532,7 @@ async def run_spike_verification(
                         f"Honeytoken latency {honeytoken_delivered_latency:.3f}s exceeded budget {honeytoken_latency_budget}s"
                     )
                 print(
-                    f"  • Kill-Chain Attacker IP ({KILL_CHAIN_IP}) Sequence   : "
+                    f"  • Kill-Chain Attacker IP ({target_attacker_ip}) Sequence   : "
                     f"{kc_report.get('observed_sequence')}"
                 )
                 print(
@@ -606,12 +661,33 @@ def main() -> None:
         default=HONEYTOKEN_LATENCY_BUDGET,
         help=f"Latency budget in seconds for honeytoken alert delivery (default: {HONEYTOKEN_LATENCY_BUDGET}s)",
     )
+    parser.add_argument(
+        "--attacker-ip",
+        type=str,
+        default=os.getenv("ATTACKER_IP", KILL_CHAIN_IP),
+        help=f"Attacker IP for kill-chain injection (default: {KILL_CHAIN_IP})",
+    )
+    parser.add_argument(
+        "--honeytoken-ip",
+        type=str,
+        default=os.getenv("HONEYTOKEN_IP", HONEYTOKEN_IP),
+        help=f"Honeytoken trigger source IP (default: {HONEYTOKEN_IP})",
+    )
+    parser.add_argument(
+        "--normal-subnet-prefix",
+        type=str,
+        default=os.getenv("NORMAL_SUBNET_PREFIX", NORMAL_SUBNET_PREFIX),
+        help=f"Subnet prefix for background noise generation (default: {NORMAL_SUBNET_PREFIX})",
+    )
     args = parser.parse_args()
     asyncio.run(
         run_spike_verification(
             spike_count=args.spike_count,
             simulate_outage=args.simulate_outage,
             honeytoken_latency_budget=args.honeytoken_latency_budget,
+            attacker_ip=args.attacker_ip,
+            honeytoken_ip=args.honeytoken_ip,
+            normal_subnet_prefix=args.normal_subnet_prefix,
         )
     )
 

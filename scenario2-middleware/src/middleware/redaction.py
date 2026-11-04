@@ -103,7 +103,6 @@ def redact_sensitive_data(
 
         if isinstance(data, str):
             stripped = data.strip()
-            # Attempt to parse embedded JSON string
             if (stripped.startswith("{") and stripped.endswith("}")) or (
                 stripped.startswith("[") and stripped.endswith("]")
             ):

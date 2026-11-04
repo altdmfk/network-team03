@@ -1,12 +1,13 @@
 import hashlib
 import hmac
+import json
 import logging
 import os
 import threading
 import time
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import HTTPException, Request, status
 
@@ -52,13 +53,16 @@ def _load_keys_from_value_or_file(raw_value: Optional[str]) -> List[str]:
 
 
 def get_ingest_api_keys() -> List[str]:
-    """Retrieves allowed ingest API keys from INGEST_API_KEYS or INGEST_API_KEYS_FILE."""
+    """Retrieves allowed ingest API keys from INGEST_API_KEYS, INGEST_API_KEYS_FILE, or MIDDLEWARE_API_KEY."""
     file_path = os.environ.get("INGEST_API_KEYS_FILE")
     if file_path:
         keys = _load_keys_from_value_or_file(file_path)
         if keys:
             return keys
-    return _load_keys_from_value_or_file(os.environ.get("INGEST_API_KEYS", ""))
+    raw_keys = os.environ.get("INGEST_API_KEYS", "").strip()
+    if not raw_keys and os.environ.get("MIDDLEWARE_API_KEY"):
+        raw_keys = os.environ.get("MIDDLEWARE_API_KEY", "").strip()
+    return _load_keys_from_value_or_file(raw_keys)
 
 
 def get_admin_api_keys() -> List[str]:
@@ -170,13 +174,54 @@ def verify_hmac_signature(
     return None
 
 
+def generate_hmac_signature_headers(
+    api_key: str,
+    raw_body: Union[bytes, str, Dict[str, Any], List[Any]],
+    timestamp: Optional[float] = None,
+) -> Dict[str, str]:
+    """
+    Generates HMAC-SHA256 authentication headers (X-Signature and X-Timestamp)
+    satisfying verify_hmac_signature specification.
+    """
+    if timestamp is None:
+        timestamp = time.time()
+    ts_str = f"{timestamp:.6f}"
+
+    if isinstance(raw_body, (dict, list)):
+        body_bytes = json.dumps(
+            raw_body, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    elif isinstance(raw_body, str):
+        body_bytes = raw_body.encode("utf-8")
+    elif isinstance(raw_body, (bytes, bytearray)):
+        body_bytes = bytes(raw_body)
+    else:
+        body_bytes = str(raw_body).encode("utf-8")
+
+    sig = hmac.new(
+        api_key.encode("utf-8"),
+        f"{ts_str}:".encode("utf-8") + body_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+
+    return {
+        "X-Signature": sig,
+        "X-Timestamp": ts_str,
+    }
+
+
 async def authenticate_request(request: Request, role: AuthRole) -> str:
     """
     FastAPI dependency logic that validates authentication.
-    Returns the authenticated client identity (e.g. key hash/value or 'anonymous').
+    Returns the authenticated client identity (SHA-256 hex digest or 'ip:<addr>' fallback).
+    Never returns plaintext API keys to prevent memory exposure.
     """
     if not is_auth_enabled():
-        return request.headers.get("X-API-Key") or "anonymous"
+        raw_key = request.headers.get("X-API-Key")
+        if raw_key:
+            return hashlib.sha256(raw_key.strip().encode("utf-8")).hexdigest()
+        client_ip = (request.client.host if request and request.client else None) or "127.0.0.1"
+        return f"ip:{client_ip}"
 
     if role == AuthRole.INGEST:
         allowed_keys = get_ingest_api_keys()
@@ -200,7 +245,7 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
     # 1. Scheme A: X-API-Key verification
     if api_key_header is not None:
         if verify_api_key_match(api_key_header, allowed_keys):
-            return api_key_header
+            return hashlib.sha256(api_key_header.strip().encode("utf-8")).hexdigest()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid {auth_role_name} API key.",
@@ -216,7 +261,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
                 headers={"WWW-Authenticate": "Signature"},
             )
 
-        # Parse timestamp
         try:
             req_ts = float(ts_header.strip())
         except ValueError:
@@ -226,7 +270,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
                 headers={"WWW-Authenticate": "Signature"},
             )
 
-        # Verify 300-second replay window
         now = time.time()
         if abs(now - req_ts) > REPLAY_WINDOW_SECONDS:
             raise HTTPException(
@@ -235,7 +278,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
                 headers={"WWW-Authenticate": "Signature"},
             )
 
-        # Replay protection check
         sig_id = f"{sig_header.strip()}:{ts_header.strip()}"
         if not replay_cache.add_if_not_present(sig_id, req_ts):
             raise HTTPException(
@@ -247,7 +289,7 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
         raw_body = await request.body()
         matched_key = verify_hmac_signature(raw_body, ts_header, sig_header, allowed_keys)
         if matched_key is not None:
-            return matched_key
+            return hashlib.sha256(matched_key.strip().encode("utf-8")).hexdigest()
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -255,7 +297,6 @@ async def authenticate_request(request: Request, role: AuthRole) -> str:
             headers={"WWW-Authenticate": "Signature"},
         )
 
-    # Neither credential provided
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=f"Authentication required for {auth_role_name} endpoint. Provide X-API-Key or X-Timestamp + X-Signature.",

@@ -32,12 +32,22 @@ Kali → 5001 로그인에 미끼 계정 입력
 시나리오 1 웹앱은 Graylog로 **GELF UDP 12201**을 직접 보냅니다.
 팀 Middleware가 쓰는 **GELF HTTP** 입력과는 별개라서 따로 만들어야 합니다.
 
+> 같은 12201이어도 충돌하지 않습니다. Middleware는 **TCP** 12201(GELF HTTP)을 쓰고
+> ([시나리오 2 가이드 2-1](../scenario2-middleware/SCENARIO2_SETUP_GUIDE.md#2-1-gelf-http-인풋-생성),
+> [시나리오 2 README](../scenario2-middleware/README.md)의 `http://host.docker.internal:12201/gelf`),
+> 시나리오 1은 **UDP** 12201을 씁니다. 포트 번호는 TCP와 UDP가 따로라서 두 입력을 함께 켜 둘 수 있습니다.
+
 1. Graylog → System → Inputs → 드롭다운에서 **GELF UDP** → Launch new input
 2. Title `S1 GELF UDP`, Port `12201`, Global 체크 → Save
 3. Graylog 컨테이너가 UDP 포트를 열어 두었는지 확인합니다.
    docker 설정의 포트에 `12201:12201/udp`가 있어야 합니다. 없으면 추가 후 컨테이너를 다시 만듭니다.
 
 ✅ **확인**: Inputs 목록에서 `S1 GELF UDP`가 RUNNING
+
+> **Graylog가 다른 PC에 있을 때**: 웹앱은 GELF UDP를 기본으로 **자기 PC(`localhost`)의 Graylog**로만 보냅니다.
+> Middleware의 다중 전송(`GRAYLOG_GELF_URL`)은 Middleware 경로에만 적용되므로, 시나리오 1 탐지를 다른 PC의 Graylog에서 하려면
+> 웹앱을 켜기 전에 PowerShell에서 `$env:GRAYLOG_HOST = "<Graylog PC IP>"`를 입력하고 같은 창에서 `.\start-enginesquare.ps1`을 실행합니다.
+> (`start-enginesquare.ps1`은 `.env`에 `MIDDLEWARE_*`·`ENGINESQUARE_*`만 허용하므로 `GRAYLOG_HOST`는 `.env`가 아니라 PowerShell에 입력합니다.)
 
 ### 2단계. Graylog 이벤트·알림 가져오기
 
@@ -77,27 +87,58 @@ curl -s -X POST http://localhost:5678/webhook/honeytoken -H "Content-Type: appli
 - 미끼 계정 비밀번호는 아무도 모르는 32자리 랜덤 값입니다.
 - 미끼 계정은 회원 관리 목록에서 일반 회원과 구분되지 않습니다(의도된 동작).
 
-✅ **확인**: 시나리오 관리 박스에 `HT-001 / backup_admin / 대기`
+**미끼가 만들어지는 위치** (MySQL `enginesquare` DB, 미끼 하나에 두 줄)
+
+회원 목록과 미끼 표시가 저장된 절대 위치는 **`mysql-server` 컨테이너 → `enginesquare` DB → `users`·`honeytokens` 표**입니다(`enginesquare.users`, `enginesquare.honeytokens`).
+디스크 파일로는 컨테이너 안 `/var/lib/mysql/enginesquare/users.ibd`이지만, 직접 열어 보는 형식이 아니므로 아래 DB 명령으로 확인합니다.
+
+| 표 | 들어가는 값 | 역할 |
+|---|---|---|
+| `users` | `username`=`backup_admin`, `password_hash`=랜덤 값의 해시, `role`=`member` | 공격자에게 보이는 "진짜 같은" 회원 |
+| `honeytokens` | `token_id`=`HT-001`, `token_type`=`account`, `token_value`=`backup_admin`, `placement`=`users_table`, `status`=`active` | 이 회원이 미끼라는 표시. 웹앱은 로그인 때 이 표를 보고 미끼를 알아봅니다 |
+
+미끼가 처음 쓰이면 `honeytokens`의 `status`가 `used`로 바뀌고 `used_at`·`used_by_ip`가 채워집니다. `used`여도 탐지는 계속 동작합니다.
+
+✅ **확인 1 (화면) — 미끼가 심긴 위치 직접 보기**
+
+> **회원 목록 위치**: `admin`으로 로그인 → 위쪽 메뉴 **관리자** → "보안 관리" 화면에서 위쪽 오른편이 **시나리오 관리** 박스, 그 바로 아래가 **회원 관리** 목록입니다.
+> 주소로는 `http://127.0.0.1:5001/admin#members`입니다. 회원이 많으면 목록 오른쪽 위의 **이전/다음**으로 페이지를 넘겨 찾습니다.
+> 미끼 줄로 바로 가는 주소는 일부러 두지 않았습니다. 미끼는 일반 회원과 구분되지 않아야 하기 때문입니다.
+
+1. `admin`으로 로그인한 뒤 `http://127.0.0.1:5001/admin#scenario-management` → 시나리오 관리 박스에서 미끼 계정 이름을 확인합니다(`HT-001 / backup_admin / 대기`).
+2. 같은 화면 아래 `http://127.0.0.1:5001/admin#members`(회원 관리)에서 **같은 이름을 찾습니다.** 그 줄이 미끼가 실제로 심긴 자리입니다.
+3. 그 줄이 `일반 회원`으로 보이면 정상입니다. 공격자가 회원 목록을 빼냈을 때 보게 되는 모습과 같습니다.
+
+`placement`(심은 위치) 값과 화면 위치는 이렇게 대응합니다.
+
+| `placement` 값 | 심긴 곳 | 화면에서 보는 곳 |
+|---|---|---|
+| `users_table` | `users` 표(회원 목록)의 한 줄 | 관리자 → 회원 관리(`/admin#members`) |
+
+디스코드 알림의 "심은 위치: users_table"도 같은 뜻입니다.
+
+✅ **확인 2 (DB)** — Git Bash 또는 PowerShell:
+```bash
+docker exec mysql-server mysql -uroot -p123456 enginesquare -e "SELECT token_id, token_value, placement, status, used_at, used_by_ip FROM honeytokens; SELECT username, role FROM users WHERE username='backup_admin';"
+```
+`honeytokens`에 `HT-001 | backup_admin | users_table | active`, `users`에 `backup_admin | member`가 나오면 정상입니다.
+(DB 비밀번호가 다르면 `-p` 뒤를 본인 값으로 바꿉니다. 비밀번호 경고 한 줄은 정상입니다.)
+
+> 심긴 것을 확인하려고 미끼로 직접 로그인해 보지는 않습니다. 탐지→차단→알림이 실제로 실행됩니다. 로그인 시험은 아래 "시연하기"에서 합니다.
 
 여기까지 하면 적용 완료입니다.
 
 ## 시연하기 (Kali → 5001)
 
-### 1. 웹앱을 0.0.0.0으로 실행
+### 1. 서버 실행
 
-Kali에서 5001에 접속해야 합니다. 현재 `start-enginesquare.ps1`은 웹앱을 127.0.0.1로만 실행하므로 시나리오 1 시연 때는 두 창으로 실행합니다.
+프로젝트 루트 PowerShell에서 공용 실행 파일로 API(5000)와 웹앱(5001)을 함께 켭니다.
 
-PowerShell 창 1 (프로젝트 루트, 공용 API):
 ```powershell
-python app.py
+.\start-enginesquare.ps1
 ```
 
-PowerShell 창 2 (`web-app` 폴더, 웹앱):
-```powershell
-$env:MIDDLEWARE_INGEST_URL = "http://localhost:8000/ingest"
-$env:MIDDLEWARE_API_KEY = "팀에서 공유한 ingest 키"
-python -m flask --app app run --host 0.0.0.0 --port 5001
-```
+웹앱은 `0.0.0.0`으로 실행되므로 같은 PC의 WSL Kali에서도 5001에 접속할 수 있습니다. 실행 창은 켜 두고, Enter를 누르면 두 서버가 함께 종료됩니다. 서버 로그는 `.runtime-logs/`에 남습니다.
 
 ### 2. Kali에서 공격
 
@@ -130,12 +171,14 @@ curl -i -X POST "http://$GW:5001/login" -d "username=backup_admin&password=1234"
 
 | 증상 | 원인·조치 |
 |---|---|
-| Kali에서 5001 접속 안 됨 | 웹앱이 127.0.0.1로 실행됨 → 시연하기 1번처럼 `--host 0.0.0.0` |
+| Kali에서 5001 접속 안 됨 | 최신 main을 받았는지 확인(웹앱이 `0.0.0.0`으로 실행되는 버전). Windows 방화벽이 5001을 막는지 확인 |
 | 미끼 로그인 후 아무 반응 없음 | Graylog에서 `rule:honeytoken` 검색. 로그가 없으면 1단계(GELF UDP 입력·`12201/udp` 포트) 확인 |
 | Graylog에 로그는 있는데 n8n 미실행 | 2단계 URL 허용 목록, 이벤트 정의의 알림 연결 확인 |
 | `webhook "POST honeytoken" is not registered` | n8n 워크플로가 Publish되지 않음 |
 | n8n에서 `access to env vars denied` | IP 차단 노드 URL에 `$env`가 남음 → 파일을 다시 가져오거나 고정 주소로 교체 |
 | Discord 알림만 안 옴 | 이미 차단된 IP(`changed=false`) → 차단 해제 후 재시도. 또는 Discord 주소 확인 |
+| 내 PC 브라우저로 미끼 로그인했는데 접속이 막히지 않음 | 정상입니다. 관리자용 `127.0.0.1`은 차단 대상에서 제외됩니다. 탐지·티켓·알림은 동작하며, 차단 확인은 Kali처럼 다른 IP에서 합니다 |
+| Graylog가 다른 PC인데 시나리오 1만 탐지 안 됨 | 웹앱의 UDP는 기본으로 `localhost`로 갑니다 → 1단계 아래 안내대로 `GRAYLOG_HOST` 설정 |
 | 로그 전송 실패 여부 | 화면에는 표시하지 않고 웹앱 서버 로그에 `Scenario 1 ... failed` 경고로 남음 |
 
 ## 자주 묻는 질문
@@ -143,6 +186,8 @@ curl -i -X POST "http://$GW:5001/login" -d "username=backup_admin&password=1234"
 - **공격자가 미끼의 랜덤 비밀번호를 맞히면?** 로그인되지 않습니다. 미끼 계정은 비밀번호 확인 전에 걸러서 항상 실패 화면을 보내고 탐지합니다. 억지로 세션을 만들어도 다음 요청에서 로그아웃되고, 첫 시도에 차단되므로 대입 공격도 이어갈 수 없습니다.
 - **정상 사용자가 실수로 미끼를 쓰면?** 미끼 이름은 실제 사용자와 겹치지 않게 정하고 공개하지 않습니다. 오탐이 사실상 없다는 것이 허니토큰의 장점입니다.
 - **왜 Wazuh는 쓰지 않나요?** 미끼는 한 번 사용만으로 공격이 확정되어 상관 분석이 필요 없습니다. Graylog → n8n 한 경로로 대응하며, Wazuh 이중화는 확장 과제입니다.
+- **왜 Graylog로 UDP를 쓰나요? 팀은 미들웨어(TCP)를 쓰는데요?** 시나리오 1을 처음 단독으로 만들 때 쓰던 Graylog GELF UDP 입력을 그대로 이어 썼습니다. UDP는 보내고 끝이라 Graylog가 느리거나 꺼져 있어도 로그인 응답이 늦어지지 않는 장점이 있고, 도착 확인이 없어 유실될 수 있는 게 한계입니다. 웹앱은 같은 기록을 미들웨어로도 보내고 있어서, Graylog 탐지를 미들웨어 경유(TCP, WAL 버퍼링·허니토큰 우선 처리)로 통일하는 것이 개선 방향입니다.
+- **`changed`는 무엇인가요?** 공용 API가 "이번에 이 IP를 **새로** 차단했는지"를 알려 주는 값입니다. 처음 차단하면 `true`, 이미 차단돼 있던 IP면 `false`입니다. n8n은 `true`일 때만 Discord로 알려서, 공격자가 여러 번 시도해도 알림은 한 번만 갑니다. 관리자가 차단을 해제한 뒤 다시 걸리면 다시 `true`가 됩니다.
 - **탐지 건수가 시도 횟수와 다르면?** 탐지 건수는 티켓별 `occurrence_count` 합계입니다. Graylog가 10초 단위로 검사하므로 짧은 시간의 여러 시도는 한 번으로 묶일 수 있습니다.
 
 ## 코드 위치 (참고)

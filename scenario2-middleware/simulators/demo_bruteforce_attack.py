@@ -52,7 +52,6 @@ def main() -> None:
     print("=" * 80)
 
     with httpx.Client(timeout=5.0) as client:
-        # 반복 시연이 가능하도록 이전 차단 상태를 사전 초기화
         print(f"\n[*] [사전 준비] 공격자 IP({args.ip}) 이전 차단 상태 초기화 확인...")
         try:
             unblock_res = client.post(
@@ -88,7 +87,6 @@ def main() -> None:
             "Graylog(:12201)로 안전하게 버퍼링 배송되었습니다."
         )
 
-        # Graylog 실시간 집계 및 n8n 웹훅을 통한 자동 차단 반영 대기
         print("[*] [SOAR 루프] Graylog 실시간 집계(Aggregation) 및 n8n IP 차단 트리거 대기 중...")
         blocked = False
         for wait_step in range(1, 31):

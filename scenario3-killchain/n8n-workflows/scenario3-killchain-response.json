@@ -1,0 +1,354 @@
+{
+  "name": "시나리오3 - 킬체인 상관분석 대응",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "killchain-alert",
+        "options": {}
+      },
+      "id": "82910d7c-9ced-4c54-93bf-1fc1ab42836c",
+      "name": "Graylog Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        144
+      ],
+      "webhookId": "killchain-alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "is-critical",
+              "leftValue": "={{$json.body.severity}}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a0c41e7a-7ca3-4ffc-86c9-abbdf0ddfea0",
+      "name": "CRITICAL 인지 확인",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        224,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.7.81/lockdown",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "CHANGE_ME_SHARED_SECRET"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a7e983ed-29da-4d7e-9f03-2d6d40d2251a",
+      "name": "ESP32 Lockdown",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        128
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ticket-id",
+              "name": "incident_id",
+              "value": "=INC-{{$now.format('yyyyMMdd-HHmmss')}}",
+              "type": "string"
+            },
+            {
+              "id": "ticket-ip",
+              "name": "client_ip",
+              "value": "={{$json.body.client_ip}}",
+              "type": "string"
+            },
+            {
+              "id": "ticket-stages",
+              "name": "stages",
+              "value": "={{$json.body.stages}}",
+              "type": "string"
+            },
+            {
+              "id": "ticket-status",
+              "name": "status",
+              "value": "OPEN - lockdown applied",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9584e3eb-628b-4cbd-b1d3-75f6c17fd486",
+      "name": "인시던트 티켓 생성",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        736,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/1567368969524879513/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"🚨 긴급 — 킬체인 전체 단계 탐지 (CRITICAL)\",\n      \"color\": 15548997,\n      \"fields\": [\n        {\"name\": \"공격 IP\", \"value\": \"{{$json.client_ip}}\", \"inline\": true},\n        {\"name\": \"상태\", \"value\": \"CRITICAL\", \"inline\": true},\n        {\"name\": \"탐지 단계\", \"value\": \"{{$json.stages}}\", \"inline\": false},\n        {\"name\": \"인시던트\", \"value\": \"{{$json.incident_id}}\", \"inline\": false}\n      ],\n      \"footer\": {\"text\": \"EngineSquare · 시나리오3\"}\n    }\n  ],\n  \"components\": [\n    {\n      \"type\": 1,\n      \"components\": [\n        {\n          \"type\": 2,\n          \"style\": 5,\n          \"label\": \"실시간 대시보드 열기\",\n          \"emoji\": {\"name\": \"📊\"},\n          \"url\": \"http://127.0.0.1:5001/dashboard\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "62ffadfb-d183-42d0-89e7-3d5518cd2350",
+      "name": "메신저 알림 (CRITICAL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1152,
+        -96
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "V3bgLs88kqaqxHaa",
+          "name": "Header Auth account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.7.81/warning",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Auth-Token",
+              "value": "CHANGE_ME_SHARED_SECRET"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "945a2648-fda8-4301-a5d0-e658c1b3c84b",
+      "name": "ESP32 Warning (LED 노랑)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        608
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/1567368969524879513/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"⚠️ 경고 — 킬체인 1~2단계 탐지\",\n      \"color\": 16763904,\n      \"fields\": [\n        {\"name\": \"공격 IP\", \"value\": \"{{$json.body.client_ip}}\", \"inline\": true},\n        {\"name\": \"상태\", \"value\": \"WARNING\", \"inline\": true},\n        {\"name\": \"탐지 단계\", \"value\": \"{{$json.body.stages}}\", \"inline\": false}\n      ],\n      \"footer\": {\"text\": \"EngineSquare · 시나리오3\"}\n    }\n  ],\n  \"components\": [\n    {\n      \"type\": 1,\n      \"components\": [\n        {\n          \"type\": 2,\n          \"style\": 5,\n          \"label\": \"실시간 대시보드 열기\",\n          \"emoji\": {\"name\": \"📊\"},\n          \"url\": \"http://127.0.0.1:5001/dashboard\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "12ae6d0a-e0c9-4982-ac28-9d5f50967d06",
+      "name": "메신저 알림 (WARNING)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        416
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "V3bgLs88kqaqxHaa",
+          "name": "Header Auth account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = '/home/node/.n8n/incidents.jsonl';\nfor (const item of $input.all()) {\nfs.appendFileSync(path, JSON.stringify(item.json) + '\\n');\n}\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -96
+      ],
+      "id": "ef264e1d-bfe9-41e7-bb38-0af4d3e5ff73",
+      "name": "인시던트 파일 저장"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.3.8:5000/automation/killchain-response",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"event_type\": \"killchain_critical\", \"client_ip\": \"{{ $json.body.client_ip }}\", \"status_code\": 200, \"target_resource\": \"/device/control\", \"severity\": \"높음\", \"status\": \"열림\", \"action\": \"pfSense 차단 + IoT Lockdown\", \"reason\": \"killchain_critical\", \"timestamp\": \"{{ $now.toISO() }}\"}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        736,
+        352
+      ],
+      "id": "abfa6d95-a73e-421a-974c-be6ca2425000",
+      "name": "HTTP Request",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=easyrule block wan {{ $json.body.client_ip }}"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        736,
+        128
+      ],
+      "id": "76dab6c3-0350-4910-ba0f-a674c6c03302",
+      "name": "pfSense IP 차단 (SSH easyrule)",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "wfHjqs5HK7LhrdEr",
+          "name": "SSH Private Key account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Graylog Webhook": {
+      "main": [
+        [
+          {
+            "node": "CRITICAL 인지 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRITICAL 인지 확인": {
+      "main": [
+        [
+          {
+            "node": "인시던트 티켓 생성",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "pfSense IP 차단 (SSH easyrule)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ESP32 Warning (LED 노랑)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "메신저 알림 (WARNING)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "인시던트 티켓 생성": {
+      "main": [
+        [
+          {
+            "node": "인시던트 파일 저장",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "인시던트 파일 저장": {
+      "main": [
+        [
+          {
+            "node": "메신저 알림 (CRITICAL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pfSense IP 차단 (SSH easyrule)": {
+      "main": [
+        [
+          {
+            "node": "ESP32 Lockdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "da9745ed-d892-40fc-aafb-eccee6dcd87d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c8fc30d3701c7309d8df0c966477d630ffa66b3f9f7f9414ba387e6b8681eb3e"
+  },
+  "nodeGroups": [],
+  "id": "MPAAeg2vWpJtPAjR",
+  "tags": []
+}

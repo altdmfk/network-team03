@@ -1,0 +1,371 @@
+{
+  "v": 1,
+  "id": "cf1a63dd-7082-41a9-9e3f-db70af1e8815",
+  "rev": 1,
+  "name": "시나리오3 킬체인 상관분석",
+  "summary": "킬체인 상관분석 WARNING/CRITICAL 알림 설정",
+  "description": "킬체인(공격 체인) 상관분석 탐지 — WARNING/CRITICAL Event Definition + n8n 알림 Notification 포함. 시나리오3.",
+  "vendor": "EngineSquare",
+  "url": "",
+  "parameters": [],
+  "entities": [
+    {
+      "v": "1",
+      "type": {
+        "name": "event_definition",
+        "version": "1"
+      },
+      "id": "703a660d-3f96-469c-a321-c71e25cde812",
+      "data": {
+        "field_spec": {
+          "client_ip": {
+            "data_type": "string",
+            "providers": [
+              {
+                "type": "template-v1",
+                "template": "${event.group_by_fields.client_ip}",
+                "require_values": false
+              }
+            ]
+          }
+        },
+        "config": {
+          "query_parameters": [],
+          "search_within_ms": 600000,
+          "query": {
+            "@type": "string",
+            "@value": "event_type:(recon_scan OR PORT_SCAN OR api_key_compromised OR BRUTE_FORCE OR device_control) AND NOT client_ip:192.168.10.*"
+          },
+          "cron_expression": null,
+          "cron_timezone": null,
+          "use_cron_scheduling": false,
+          "streams": [],
+          "execute_every_ms": 60000,
+          "event_limit": 100,
+          "group_by": [
+            "client_ip"
+          ],
+          "series": [
+            {
+              "type": "card",
+              "id": "card-event_type",
+              "field": "event_type"
+            }
+          ],
+          "conditions": {
+            "expression": {
+              "expr": ">=",
+              "left": {
+                "expr": "number-ref",
+                "ref": "card-event_type"
+              },
+              "right": {
+                "expr": "number",
+                "value": 3
+              }
+            }
+          },
+          "type": "aggregation-v1",
+          "stream_categories": [],
+          "filters": []
+        },
+        "priority": {
+          "@type": "integer",
+          "@value": 2
+        },
+        "notifications": [
+          {
+            "notification_id": {
+              "@type": "string",
+              "@value": "5a4817d2-7e8e-4e8e-ad89-4f9d4402d410"
+            },
+            "notification_parameters": null
+          }
+        ],
+        "remediation_steps": null,
+        "matched_at": "2026-11-04T07:00:59.397Z",
+        "_scope": {
+          "@type": "string",
+          "@value": "DEFAULT"
+        },
+        "notification_settings": {
+          "grace_period_ms": 300000,
+          "backlog_size": 0
+        },
+        "updated_at": "2026-11-04T06:43:59.394Z",
+        "title": {
+          "@type": "string",
+          "@value": "Killchain CRITICAL"
+        },
+        "is_scheduled": {
+          "@type": "boolean",
+          "@value": true
+        },
+        "key_spec": [],
+        "storage": [
+          {
+            "type": "persist-to-streams-v1",
+            "streams": [
+              "000000000000000000000002"
+            ]
+          }
+        ],
+        "alert": {
+          "@type": "boolean",
+          "@value": true
+        },
+        "description": {
+          "@type": "string",
+          "@value": ""
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=6.1.16+4a05695"
+        }
+      ]
+    },
+    {
+      "v": "1",
+      "type": {
+        "name": "notification",
+        "version": "1"
+      },
+      "id": "5a4817d2-7e8e-4e8e-ad89-4f9d4402d410",
+      "data": {
+        "title": {
+          "@type": "string",
+          "@value": "n8n - Killchain CRITICAL"
+        },
+        "description": {
+          "@type": "string",
+          "@value": ""
+        },
+        "config": {
+          "type": "http-notification-v2",
+          "url": {
+            "@type": "string",
+            "@value": "http://aleph-n8n:5678/webhook/killchain-alert"
+          },
+          "skip_tls_verification": {
+            "@type": "boolean",
+            "@value": false
+          },
+          "method": {
+            "@type": "string",
+            "@value": "POST"
+          },
+          "time_zone": {
+            "@type": "string",
+            "@value": "UTC"
+          },
+          "content_type": {
+            "@type": "string",
+            "@value": "JSON"
+          },
+          "headers": {
+            "@type": "string",
+            "@value": ""
+          },
+          "body_template": {
+            "@type": "string",
+            "@value": "{\"severity\":\"CRITICAL\",\"client_ip\":\"${event.group_by_fields.client_ip}\",\"stages\":\"recon_scan,api_key_compromised,device_control\",\"incident_title\":\"${event.message}\"}"
+          }
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=6.1.16+4a05695"
+        }
+      ]
+    },
+    {
+      "v": "1",
+      "type": {
+        "name": "event_definition",
+        "version": "1"
+      },
+      "id": "5b84e3b2-a835-43e4-9658-1cdf56a881d1",
+      "data": {
+        "field_spec": {
+          "client_ip": {
+            "data_type": "string",
+            "providers": [
+              {
+                "type": "template-v1",
+                "template": "${fields.client_ip}",
+                "require_values": false
+              }
+            ]
+          }
+        },
+        "config": {
+          "query_parameters": [],
+          "search_within_ms": 600000,
+          "query": {
+            "@type": "string",
+            "@value": "event_type:(recon_scan OR PORT_SCAN OR api_key_compromised OR BRUTE_FORCE OR device_control) AND NOT client_ip:192.168.10.*"
+          },
+          "cron_expression": null,
+          "cron_timezone": null,
+          "use_cron_scheduling": false,
+          "streams": [],
+          "execute_every_ms": 60000,
+          "event_limit": 100,
+          "group_by": [
+            "client_ip"
+          ],
+          "series": [
+            {
+              "type": "card",
+              "id": "card-event_type",
+              "field": "event_type"
+            }
+          ],
+          "conditions": {
+            "expression": {
+              "expr": "&&",
+              "left": {
+                "expr": ">=",
+                "left": {
+                  "expr": "number-ref",
+                  "ref": "card-event_type"
+                },
+                "right": {
+                  "expr": "number",
+                  "value": 1
+                }
+              },
+              "right": {
+                "expr": "<",
+                "left": {
+                  "expr": "number-ref",
+                  "ref": "card-event_type"
+                },
+                "right": {
+                  "expr": "number",
+                  "value": 3
+                }
+              }
+            }
+          },
+          "type": "aggregation-v1",
+          "stream_categories": [],
+          "filters": []
+        },
+        "priority": {
+          "@type": "integer",
+          "@value": 2
+        },
+        "notifications": [
+          {
+            "notification_id": {
+              "@type": "string",
+              "@value": "02f004d8-9319-4230-aeca-edd73759bb2c"
+            },
+            "notification_parameters": null
+          }
+        ],
+        "remediation_steps": null,
+        "matched_at": "2026-11-04T07:16:47.442Z",
+        "_scope": {
+          "@type": "string",
+          "@value": "DEFAULT"
+        },
+        "notification_settings": {
+          "grace_period_ms": 300000,
+          "backlog_size": 0
+        },
+        "updated_at": "2026-11-04T06:43:47.439Z",
+        "title": {
+          "@type": "string",
+          "@value": "Killchain WARNING"
+        },
+        "is_scheduled": {
+          "@type": "boolean",
+          "@value": true
+        },
+        "key_spec": [],
+        "storage": [
+          {
+            "type": "persist-to-streams-v1",
+            "streams": [
+              "000000000000000000000002"
+            ]
+          }
+        ],
+        "alert": {
+          "@type": "boolean",
+          "@value": true
+        },
+        "description": {
+          "@type": "string",
+          "@value": ""
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=6.1.16+4a05695"
+        }
+      ]
+    },
+    {
+      "v": "1",
+      "type": {
+        "name": "notification",
+        "version": "1"
+      },
+      "id": "02f004d8-9319-4230-aeca-edd73759bb2c",
+      "data": {
+        "title": {
+          "@type": "string",
+          "@value": "n8n - Killchain WARNING"
+        },
+        "description": {
+          "@type": "string",
+          "@value": ""
+        },
+        "config": {
+          "type": "http-notification-v2",
+          "url": {
+            "@type": "string",
+            "@value": "http://aleph-n8n:5678/webhook/killchain-alert"
+          },
+          "skip_tls_verification": {
+            "@type": "boolean",
+            "@value": false
+          },
+          "method": {
+            "@type": "string",
+            "@value": "POST"
+          },
+          "time_zone": {
+            "@type": "string",
+            "@value": "UTC"
+          },
+          "content_type": {
+            "@type": "string",
+            "@value": "JSON"
+          },
+          "headers": {
+            "@type": "string",
+            "@value": ""
+          },
+          "body_template": {
+            "@type": "string",
+            "@value": "{\"severity\":\"WARNING\",\"client_ip\":\"${event.group_by_fields.client_ip}\",\"stages\":\"partial (1-2 stages)\",\"incident_title\":\"${event.message}\"}"
+          }
+        }
+      },
+      "constraints": [
+        {
+          "type": "server-version",
+          "version": ">=6.1.16+4a05695"
+        }
+      ]
+    }
+  ]
+}

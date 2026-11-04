@@ -232,12 +232,10 @@ class RetryTopicConsumer:
             logger.error("Failed to publish to DLQ during retry-cap escalation; offset not committed.")
             return False
 
-        # Honor due time delay
         due_time = self.calculate_due_time(msg)
         if not self.wait_until_due(msg, due_time):
             return False
 
-        # Parse message payload
         raw_val = msg.value()
         try:
             decoded = json.loads(raw_val.decode("utf-8"))
@@ -259,14 +257,12 @@ class RetryTopicConsumer:
                 return True
             return False
 
-        # Transform to GELF
         gelf_record = transform_to_gelf(
             decoded,
             partition=msg.partition(),
             offset=msg.offset(),
         )
 
-        # Attempt delivery to Graylog
         delivered = False
         error_reason = "Unknown delivery error"
         try:

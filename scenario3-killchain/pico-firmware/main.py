@@ -60,10 +60,14 @@ def apply_status(status):
 
 
 def blink_once():
-    # device/control 정상 처리 시 파랑을 짧게 깜빡여서 명령 수신을 눈으로 확인 (상태 LED는 그대로 유지)
+    # device/control 정상 처리 시 파랑을 짧게 깜빡여서 명령 수신을 눈으로 확인
+    # 상태 LED는 깜빡이는 동안만 잠깐 끄고 끝나면 복구 (두 LED가 동시에 켜지지 않도록)
+    current_status = state["status"]
+    leds_off()
     led_blue.value(1)
     time.sleep(0.15)
     led_blue.value(0)
+    apply_status(current_status)
 
 
 def apply_lockdown():
@@ -80,6 +84,10 @@ def apply_lockdown():
 
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
+    # ESP32-C3 MicroPython에서 소프트 리셋 직후 "Wifi Internal State Error"가
+    # 간헐적으로 발생함 - 드라이버를 껐다 켜서 내부 상태를 초기화한 뒤 연결 시도
+    wlan.active(False)
+    time.sleep(0.5)
     wlan.active(True)
     wlan.connect(config.WIFI_SSID, config.WIFI_PASSWORD)
 
