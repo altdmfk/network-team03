@@ -62,7 +62,7 @@ API 요청 로그는 팀 Middleware를 거쳐 Graylog로 전달되며, 시나리
 대시보드는 DB의 이벤트·티켓과 전달받은 대응 결과를 표시합니다. 티켓 종료는 운영상 처리 상태이며 자동 대응 완료와는 별개입니다.
 
 Wazuh 규칙, 별도 로그 수집기 실행 방법과 과거 로그 재처리 증적의 원본 시각 설명은
-[시나리오 2 README](../scenario3-api-key-compromised/README.md#wazuh-탐지)에 모아두었습니다.
+[시나리오 2 README](../scenario2-api-key-compromised/README.md#wazuh-탐지)에 모아두었습니다.
 Wazuh의 과거 로그 재처리 확인을 당시의 실시간 탐지로 표현하지 않습니다.
 
 ## MySQL 연결

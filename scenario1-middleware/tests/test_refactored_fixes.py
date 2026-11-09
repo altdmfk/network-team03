@@ -517,7 +517,7 @@ class TestSimulatorAndN8nParameterization:
         workflow_path = (
             Path(__file__).resolve().parent.parent
             / "n8n"
-            / "scenario2_bruteforce_response_workflow.json"
+            / "scenario1_bruteforce_response_workflow.json"
         )
         assert workflow_path.exists(), f"Workflow file not found at {workflow_path}"
         with open(workflow_path, "r", encoding="utf-8") as f:

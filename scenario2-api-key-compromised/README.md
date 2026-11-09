@@ -1,6 +1,6 @@
-# 시나리오 3 - 유출 API 키 탐지
+# 시나리오 2 - 유출 API 키 탐지
 
-시나리오 3 전용 Graylog 탐지 기준, n8n 자동 대응 워크플로와 Wazuh 규칙·수집 방법입니다.
+시나리오 2 전용 Graylog 탐지 기준, n8n 자동 대응 워크플로와 Wazuh 규칙·수집 방법입니다.
 
 ## 처리 흐름
 
@@ -8,7 +8,7 @@
 Flask API 서버
   -> Middleware /ingest
   -> Graylog 탐지
-  -> 시나리오 3 전용 n8n Webhook
+  -> 시나리오 2 전용 n8n Webhook
   -> API 키 폐기·재발급, 공격 IP 차단, 인시던트 생성
 ```
 
@@ -47,7 +47,7 @@ python -m pip install -r requirements.txt -r web-app/requirements.txt
 이미 통합 실행 중이면 중복 실행하지 않습니다. 규칙과 수집 설정은 아래 Wazuh 절을 참고합니다.
 
 ```powershell
-python scenario3-api-key-compromised/wazuh/forward_api_logs.py
+python scenario2-api-key-compromised/wazuh/forward_api_logs.py
 ```
 
 ### 2. Kali IP 확인 및 실습용 키 발급
@@ -110,7 +110,7 @@ HTTP **403**, `Client IP is not allowed`가 기대 결과입니다.
 
 1. Graylog에서 `API_KEY_COMPROMISED` 또는 `api_key_compromised`와 Kali IP로 검색합니다.
    요청 발생 시각이 포함되도록 검색 범위를 지정합니다. Middleware를 거친 로그인지 확인합니다.
-2. n8n 시나리오 3 실행 내역에서 키 폐기·재발급 및 IP 차단 결과를 확인합니다.
+2. n8n 시나리오 2 실행 내역에서 키 폐기·재발급 및 IP 차단 결과를 확인합니다.
    탐지 주기와 알림 유예에 따라 전달 시간이 걸릴 수 있습니다.
 3. 공용 대시보드에서 `INC-API-...` 티켓, 비허용 IP 이벤트와 대응 조치를 확인합니다.
 4. 관리자에서 기존 키 `폐기`, 교체 키 `활성`, Kali IP 차단 기록과 인시던트 연결을 확인합니다.
@@ -141,7 +141,7 @@ Wazuh Events에서 `rule.id:(100310 OR 100311 OR 100312)`로 검색합니다.
 
 ## Graylog
 
-`graylog/scenario3_api_key_compromised_rule.json`의 조건을 시나리오 3 이벤트 정의에 적용합니다.
+`graylog/api_key_compromised_rule.json`의 조건을 시나리오 2 이벤트 정의에 적용합니다.
 
 - 탐지 대상: `api_key_compromised`
 - 기준: `status_code=403`인 비허용 IP 사용
@@ -153,9 +153,9 @@ Middleware가 `event_type`을 대문자로 정규화할 수 있으므로 Graylog
 
 ## n8n
 
-`n8n/scenario3_api_key_response_workflow.json`을 시나리오 3 전용 워크플로로 가져옵니다.
+`n8n/API Key Compromised Response.json`을 시나리오 2 전용 워크플로로 가져옵니다.
 
-- Webhook: `POST /webhook/scenario3-api-key-compromised`
+- Webhook: `POST /webhook/scenario2-api-key-compromised`
 - API 서버 호출: `POST /automation/revoke-key`
 - API 서버 주소는 n8n 환경변수 `API_SERVER_URL`로 지정할 수 있습니다.
 - Docker의 n8n에서 호스트 PC의 Flask 서버를 호출할 때는 기본값으로
@@ -177,7 +177,7 @@ Middleware 주소와 인증키는 별도 설정이며, 이 폴더의 n8n 워크�
 ## Wazuh 탐지
 
 Wazuh 4.9의 JSON 디코더와 기본 부모 규칙 86600을 사용합니다.
-별도 파일 `wazuh/scenario3_rules.xml`에 아래 규칙을 정의하며 다른 시나리오 규칙은 변경하지 않습니다.
+별도 파일 `wazuh/scenario2_rules.xml`에 아래 규칙을 정의하며 다른 시나리오 규칙은 변경하지 않습니다.
 
 조건: event_type=api_key_compromised, detection_reason=not_allowed_ip, status_code=403.
 - 100310 (레벨 10): 비허용 IP의 API 키 사용, 403
@@ -192,12 +192,12 @@ Wazuh manager의 ossec.conf에 다음 블록을 추가합니다. 기존 설정�
 <ossec_config>
   <localfile>
     <log_format>json</log_format>
-    <location>/var/ossec/logs/enginesquare-scenario3.jsonl</location>
+    <location>/var/ossec/logs/enginesquare-scenario2.jsonl</location>
   </localfile>
 </ossec_config>
 ```
 
-규칙은 /var/ossec/etc/rules/scenario3_rules.xml에 복사합니다.
+규칙은 /var/ossec/etc/rules/scenario2_rules.xml에 복사합니다.
 로그 파일을 생성하고 analysisd/logcollector 설정 검사 후 manager를 재시작합니다.
 컨테이너를 삭제·재생성할 경우 설정과 로그 경로의 볼륨 영속성을 별도로 확인해야 합니다.
 
@@ -206,7 +206,7 @@ Wazuh manager의 ossec.conf에 다음 블록을 추가합니다. 기존 설정�
 프로젝트 루트에서 별도 PowerShell 창으로 실행합니다.
 
 ```powershell
-python scenario3-api-key-compromised/wazuh/forward_api_logs.py
+python scenario2-api-key-compromised/wazuh/forward_api_logs.py
 ```
 
 API 서버가 생성한 새 로그만 전달합니다. 이 창이 열려 있어야 수집이 이어집니다.

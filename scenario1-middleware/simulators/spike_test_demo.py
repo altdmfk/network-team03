@@ -57,7 +57,7 @@ async def inject_kill_chain_sequence(
     client: httpx.AsyncClient, attacker_ip: Optional[str] = None
 ) -> int:
     """
-    Scenario 4: Injects sequential Kill-Chain logs from attacker IP
+    Scenario 3: Injects sequential Kill-Chain logs from attacker IP
     (PORT_SCAN -> BRUTE_FORCE -> IOT_CONTROL) with strictly increasing timestamps.
     """
     target_ip = attacker_ip or ATTACKER_IP
@@ -125,7 +125,7 @@ async def inject_honeytoken_alert(
     client: httpx.AsyncClient, honeytoken_ip: Optional[str] = None
 ) -> int:
     """
-    Scenario 1: Injects a high-priority Honeytoken access event (`honeytoken_admin`).
+    Priority Lane: Injects a high-priority Honeytoken access event (`honeytoken_admin`).
     """
     source_ip = honeytoken_ip or HONEYTOKEN_IP
     honeytoken_event = {
@@ -162,7 +162,7 @@ async def unleash_traffic_spike(
     normal_subnet_prefix: Optional[str] = None,
 ) -> int:
     """
-    Scenarios 2 & 3: Blasts 5,000 logs (Nmap PORT_SCAN, Hydra BRUTE_FORCE, and
+    Scenarios 1 & 2: Blasts 5,000 logs (Nmap PORT_SCAN, Hydra BRUTE_FORCE, and
     403 IDOR_ATTEMPT / Leaked API Key calls) concurrently within 1-2 seconds.
     """
     subnet = normal_subnet_prefix or NORMAL_SUBNET_PREFIX
@@ -309,7 +309,7 @@ async def run_spike_verification(
     async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
         print("=" * 112)
         print(
-            " SOAR LIGHTWEIGHT WAL BROKER BUFFERING MIDDLEWARE - SCENARIO 2 MASSIVE LOG SPIKE & ZERO-LOSS VERIFICATION SUITE"
+            " SOAR LIGHTWEIGHT WAL BROKER BUFFERING MIDDLEWARE - SCENARIO 1 MASSIVE LOG SPIKE & ZERO-LOSS VERIFICATION SUITE"
         )
         print("=" * 112)
 
@@ -634,7 +634,7 @@ async def run_spike_verification(
 
         print("\n" + "=" * 112)
         print(
-            " [PASS] SCENARIO 2 VERIFIED: 100% SPIKE BUFFERED & 0.0000% LOG LOSS"
+            " [PASS] SCENARIO 1 VERIFIED: 100% SPIKE BUFFERED & 0.0000% LOG LOSS"
         )
         print(f"        {invariant_line}")
         print("=" * 112)

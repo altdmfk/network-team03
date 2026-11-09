@@ -41,7 +41,7 @@ $children = @()
 try {
     # Start the follower before the API so startup requests are not missed.
     $children += Start-Process -FilePath $pythonExe `
-        -ArgumentList '-u', 'scenario3-api-key-compromised/wazuh/forward_api_logs.py' `
+        -ArgumentList '-u', 'scenario2-api-key-compromised/wazuh/forward_api_logs.py' `
         -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $logDir 'wazuh.out.log') `
         -RedirectStandardError (Join-Path $logDir 'wazuh.err.log')

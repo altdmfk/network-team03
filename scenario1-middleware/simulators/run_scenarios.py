@@ -1,4 +1,4 @@
-"""Multi-Scenario Demonstration Runner for Scenario 2 Middleware.
+"""Multi-Scenario Demonstration Runner for Scenario 1 Middleware.
 
 Covers 3 Core Presentation Scenarios:
 1. Attack Detection -> Incident Ticket Creation & Automated IP Blocking
@@ -256,7 +256,7 @@ async def run_scenario_3(backlog_count: int = 150, attacker_ip: str = "10.0.0.99
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Multi-Scenario Demonstration Runner for Scenario 2 Middleware")
+    parser = argparse.ArgumentParser(description="Multi-Scenario Demonstration Runner for Scenario 1 Middleware")
     parser.add_argument("--scenario", "-s", type=int, choices=[1, 2, 3], required=True,
                         help="Scenario to run: 1 (Attack & Block), 2 (Normal Traffic Shaping), 3 (Honeytoken & Kill-Chain)")
     parser.add_argument("--count", "-c", type=int, default=100, help="Request count for Scenario 2 (default: 100)")

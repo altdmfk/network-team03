@@ -1,29 +1,29 @@
 {
   "id": "96qIMK1G6UtkQvUU",
-  "name": "Scenario 2 - Middleware Brute Force Response",
+  "name": "Scenario 1 - Middleware Brute Force Response",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "scenario2-bruteforce",
+        "path": "scenario1-bruteforce",
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "scenario2-webhook",
-      "name": "Scenario 2 Webhook",
+      "id": "scenario1-webhook",
+      "name": "Scenario 1 Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         260,
         300
       ],
-      "webhookId": "scenario2-bruteforce"
+      "webhookId": "scenario1-bruteforce"
     },
     {
       "parameters": {
         "jsCode": "const input = $json.body ?? $json;\nconst fields = input.fields ?? input.event?.fields ?? {};\nconst clientIp = input.client_ip ?? fields.client_ip ?? input.src_ip ?? '10.0.0.99';\nconst reason = input.reason ?? '1분 내 로그인 5회 이상 실패';\nconst timestamp = input.timestamp ?? new Date().toISOString();\n\nreturn [{\n  json: {\n    event_type: 'BRUTE_FORCE',\n    client_ip: clientIp,\n    detection_reason: reason,\n    api_key_id: input.api_key_id ?? 'key-001',\n    timestamp: timestamp\n  }\n}];"
       },
-      "id": "scenario2-normalize",
+      "id": "scenario1-normalize",
       "name": "Normalize Brute Force Event",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -50,7 +50,7 @@
         "jsonBody": "={{ JSON.stringify({ api_key_id: $json.api_key_id, client_ip: $json.client_ip, detection_reason: $json.detection_reason }) }}",
         "options": {}
       },
-      "id": "scenario2-block-ip",
+      "id": "scenario1-block-ip",
       "name": "Block Attacker IP",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -64,9 +64,9 @@
         "assignments": {
           "assignments": [
             {
-              "id": "scenario2-alert-text",
+              "id": "scenario1-alert-text",
               "name": "text",
-              "value": "={{ (() => {\n  const detection = $('Normalize Brute Force Event').item.json;\n  const response = $json;\n  const blocked = response.ip_blocked === true || response.status === 'ok' || Boolean(response.incident);\n  return '🚨 Brute Force 탐지\\n'\n    + '공격 IP: ' + String(detection.client_ip) + '\\n'\n    + '인시던트 ID: ' + String(response.incident_id || response.incident?.incident_id || 'INC-S2-BRUTEFORCE') + '\\n'\n    + '탐지 사유: ' + String(detection.detection_reason || '1분 내 로그인 5회 이상 실패') + '\\n'\n    + '대응 결과: IP 차단: ' + (blocked ? '완료' : '진행 중') + '\\n'\n    + 'EngineSquare · 시나리오 1';\n})() }}",
+              "value": "={{ (() => {\n  const detection = $('Normalize Brute Force Event').item.json;\n  const response = $json;\n  const blocked = response.ip_blocked === true || response.status === 'ok' || Boolean(response.incident);\n  return '🚨 Brute Force 탐지\\n'\n    + '공격 IP: ' + String(detection.client_ip) + '\\n'\n    + '인시던트 ID: ' + String(response.incident_id || response.incident?.incident_id || 'INC-S1-BRUTEFORCE') + '\\n'\n    + '탐지 사유: ' + String(detection.detection_reason || '1분 내 로그인 5회 이상 실패') + '\\n'\n    + '대응 결과: IP 차단: ' + (blocked ? '완료' : '진행 중') + '\\n'\n    + 'EngineSquare · 시나리오 1';\n})() }}",
               "type": "string"
             }
           ]
@@ -74,7 +74,7 @@
         "includeOtherFields": true,
         "options": {}
       },
-      "id": "scenario2-format-alert",
+      "id": "scenario1-format-alert",
       "name": "Format Alert Message",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -102,10 +102,10 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"🚨 Brute Force 탐지\",\n      \"color\": 1,\n      \"fields\": [\n        {\n          \"name\": \"공격 IP\",\n          \"value\": \"{{ $('Normalize Brute Force Event1').item.json.client_ip || '10.0.0.99' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"인시던트 ID\",\n          \"value\": \"{{ $('Block Attacker IP1').item.json.incident_id || $('Block Attacker IP1').item.json.incident?.incident_id || 'INC-S2-BRUTEFORCE' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"탐지 사유\",\n          \"value\": \"{{ $('Normalize Brute Force Event1').item.json.detection_reason || '1분 내 로그인 5회 이상 실패' }}\",\n          \"inline\": false\n        },\n        {\n          \"name\": \"대응 결과\",\n          \"value\": \"IP 차단: {{ ($('Block Attacker IP1').item.json.ip_blocked === true || $('Block Attacker IP1').item.json.status === 'ok' || Boolean($('Block Attacker IP1').item.json.incident)) ? '완료' : '진행 중' }}\",\n          \"inline\": false\n        }\n      ],\n      \"footer\": {\n        \"text\": \"EngineSquare · 시나리오 1\"\n      }\n    }\n  ],\n  \"components\": [\n    {\n      \"type\": 1,\n      \"components\": [\n        {\n          \"type\": 2,\n          \"style\": 5,\n          \"label\": \"실시간 대시보드 열기\",\n          \"emoji\": {\n            \"name\": \"📊\"\n          },\n          \"url\": \"http://127.0.0.1:5001/dashboard\"\n        }\n      ]\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"🚨 Brute Force 탐지\",\n      \"color\": 1,\n      \"fields\": [\n        {\n          \"name\": \"공격 IP\",\n          \"value\": \"{{ $('Normalize Brute Force Event1').item.json.client_ip || '10.0.0.99' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"인시던트 ID\",\n          \"value\": \"{{ $('Block Attacker IP1').item.json.incident_id || $('Block Attacker IP1').item.json.incident?.incident_id || 'INC-S1-BRUTEFORCE' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"탐지 사유\",\n          \"value\": \"{{ $('Normalize Brute Force Event1').item.json.detection_reason || '1분 내 로그인 5회 이상 실패' }}\",\n          \"inline\": false\n        },\n        {\n          \"name\": \"대응 결과\",\n          \"value\": \"IP 차단: {{ ($('Block Attacker IP1').item.json.ip_blocked === true || $('Block Attacker IP1').item.json.status === 'ok' || Boolean($('Block Attacker IP1').item.json.incident)) ? '완료' : '진행 중' }}\",\n          \"inline\": false\n        }\n      ],\n      \"footer\": {\n        \"text\": \"EngineSquare · 시나리오 1\"\n      }\n    }\n  ],\n  \"components\": [\n    {\n      \"type\": 1,\n      \"components\": [\n        {\n          \"type\": 2,\n          \"style\": 5,\n          \"label\": \"실시간 대시보드 열기\",\n          \"emoji\": {\n            \"name\": \"📊\"\n          },\n          \"url\": \"http://127.0.0.1:5001/dashboard\"\n        }\n      ]\n    }\n  ]\n}",
         "options": {}
       },
-      "id": "scenario2-discord-bot",
+      "id": "scenario1-discord-bot",
       "name": "Send Discord Notification",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -120,7 +120,7 @@
         "responseBody": "={{ JSON.stringify({ status: 'completed', event_type: 'BRUTE_FORCE', client_ip: $('Normalize Brute Force Event').item.json.client_ip, block_response: $('Block Attacker IP').item.json, discord_notification: 'sent' }) }}",
         "options": {}
       },
-      "id": "scenario2-response",
+      "id": "scenario1-response",
       "name": "Respond to Graylog",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -131,7 +131,7 @@
     }
   ],
   "connections": {
-    "Scenario 2 Webhook": {
+    "Scenario 1 Webhook": {
       "main": [
         [
           {
@@ -189,12 +189,12 @@
   },
   "active": true,
   "settings": {},
-  "versionId": "scenario2-middleware-bruteforce-v2",
+  "versionId": "scenario1-middleware-bruteforce-v2",
   "meta": {
     "templateCredsSetupCompleted": true
   },
   "tags": [
-    "scenario2",
+    "scenario1",
     "soar",
     "brute-force",
     "discord"

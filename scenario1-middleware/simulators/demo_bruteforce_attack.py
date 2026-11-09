@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-[시나리오 2 전용 라이브 시연 도구]
+[시나리오 1 전용 라이브 시연 도구]
 Main API Server(:5000/api/data)로 비인가 API 키를 이용한 연속 무차별 대입(Brute Force) 공격을 주입하여,
 1. API 서버가 401 거부 및 보안 로그 생성
 2. SOAR 미들웨어(:8000)를 거쳐 무손실로 Graylog(:12201)에 평탄화 전달
@@ -22,7 +22,7 @@ DEFAULT_ATTACKER_IP = os.environ.get("KILL_CHAIN_TARGET_IP", "10.0.0.99")
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Scenario 2 - Demo Brute Force Attack & SOAR Auto-Block"
+        description="Scenario 1 - Demo Brute Force Attack & SOAR Auto-Block"
     )
     parser.add_argument(
         "--ip",
@@ -45,7 +45,7 @@ def main() -> None:
     target_url = f"{args.api_url}/api/data"
 
     print("\n" + "=" * 80)
-    print(" [시나리오 2] 무차별 대입 공격(Brute Force) & SOAR 자동 대응 라이브 시연")
+    print(" [시나리오 1] 무차별 대입 공격(Brute Force) & SOAR 자동 대응 라이브 시연")
     print(f"   - 대상 API 엔드포인트 : {target_url}")
     print(f"   - 공격자 시뮬레이션 IP: {args.ip}")
     print(f"   - 연속 인증 실패 횟수 : {args.count}회")

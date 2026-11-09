@@ -22,16 +22,16 @@
 미들웨어가 500 EPS로 평탄화하여 전달한 로그를 기반으로 Graylog에서 공격 탐지 규칙을 생성합니다.
 1. 무차별 대입 공격 탐지:
    - Alerts > Event Definitions > Create Event Definition
-   - Title: `[S2] Brute Force Attack Detection` (Priority: High)
+   - Title: `[S1] Brute Force Attack Detection` (Priority: High)
    - Condition Type: Aggregation
    - Search Query: `status_code:401 OR (event_type:APP_REQUEST AND status_code:401)`
    - Time Range: 1 minute, Execute every: 30 seconds
    - Group by Field: `client_ip`
    - Threshold: `count() >= 5` (1분 내 동일 IP에서 5회 이상 실패 시 경보)
    - Grace Period: 1 minute (동일 IP 중복 알람 억제)
-   - Notifications: `S2 n8n Webhook (Brute Force)` 연결
+   - Notifications: `S1 n8n Webhook (Brute Force)` 연결
 2. 허니토큰 침입 탐지:
-   - Title: `[S2] Honeytoken Infiltration Alert` (Priority: Critical)
+   - Title: `[S1] Honeytoken Infiltration Alert` (Priority: Critical)
    - Condition Type: Filter
    - Search Query: `_honeytoken_alert:true OR event_type:HONEYTOKEN_ACCESS`
    - Threshold: `count() > 0` (1회 발생 시 즉시 탐지)
@@ -42,8 +42,8 @@
 기본 설정은 호스트의 Graylog(`http://host.docker.internal:12201/gelf`)로 로그를 전달합니다. `.env` 파일의 `GRAYLOG_GELF_URL`에 쉼표(`,`)로 복수 주소를 지정할 수 있습니다. 첫 번째 주소에는 기존 재시도 및 오프셋 커밋 정책을 적용해 전송합니다. 추가 주소에는 동일 배치를 비동기로 복제 전송합니다.
 
 ```powershell
-# scenario2-middleware 디렉터리로 이동
-cd scenario2-middleware
+# scenario1-middleware 디렉터리로 이동
+cd scenario1-middleware
 
 # 환경변수 파일 복사 (필요 시 주소 변경)
 Copy-Item .env.example .env

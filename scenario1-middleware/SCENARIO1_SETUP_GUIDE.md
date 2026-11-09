@@ -1,4 +1,4 @@
-# 시나리오 2: SOAR 미들웨어 및 Graylog · n8n 자동 대응 구축 가이드
+# 시나리오 1: SOAR 미들웨어 및 Graylog · n8n 자동 대응 구축 가이드
 
 트래픽 급증 시 하위 Graylog 과부하를 막기 위해 500 EPS 트래픽 평탄화와 WAL 기반 디스크 버퍼링을 수행합니다. 허니토큰 우선 라우팅, Graylog 공격 탐지 규칙, n8n 웹훅 기반 공격자 IP 자동 차단 파이프라인을 구축하고 검증하는 운영 가이드입니다.
 
@@ -28,7 +28,7 @@
        │ (1) 비인가 API 키 반복 호출 / 대량 스파이크 트래픽 인입
        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  SOAR 미들웨어 (scenario2-middleware :8000 / :9100)          │
+│  SOAR 미들웨어 (scenario1-middleware :8000 / :9100)          │
 │                                                             │
 │  - Partitioned WAL Broker (SQLite WAL 모드 디스크 버퍼링)    │
 │  - produce() 핫패스 인메모리 캐싱 (동기 DB 쿼리 0회)         │
@@ -50,7 +50,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  n8n SOAR 엔진 (:5678)                                      │
 │                                                             │
-│  - 워크플로우: Scenario 2 - Middleware Brute Force Response  │
+│  - 워크플로우: Scenario 1 - Middleware Brute Force Response  │
 │  - 공격자 IP (10.0.0.99) 및 탐지 사유 파싱                   │
 │  - 차단 API 호출: POST /automation/revoke-key               │
 │  - 디스코드 봇 실시간 알림 전송 (임베드 및 버튼 링크 포함)    │
@@ -71,11 +71,11 @@
 
 ## 2. 1단계: 미들웨어 및 관측 스택 기동
 
-`scenario2-middleware` 디렉터리에서 Docker Compose로 수집기, 컨슈머 워커, Prometheus, Grafana를 기동합니다.
+`scenario1-middleware` 디렉터리에서 Docker Compose로 수집기, 컨슈머 워커, Prometheus, Grafana를 기동합니다.
 
 ```powershell
-# 1. 시나리오 2 디렉터리로 이동
-cd scenario2-middleware
+# 1. 시나리오 1 디렉터리로 이동
+cd scenario1-middleware
 
 # 2. 컨테이너 빌드 및 백그라운드 기동
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile observability up -d --build
@@ -139,9 +139,9 @@ Graylog가 내부망의 n8n 웹훅 엔드포인트로 HTTP 요청을 보낼 수 
 
 1. 알림 생성:
    - Alerts > Notifications > Add Notification을 클릭합니다.
-   - Title: `S2 n8n Webhook (Brute Force)`
+   - Title: `S1 n8n Webhook (Brute Force)`
    - Type: HTTP Notification
-   - URL: `http://host.docker.internal:5678/webhook/scenario2-bruteforce`
+   - URL: `http://host.docker.internal:5678/webhook/scenario1-bruteforce`
    - Method: POST
    - Body Template:
      ```json
@@ -155,7 +155,7 @@ Graylog가 내부망의 n8n 웹훅 엔드포인트로 HTTP 요청을 보낼 수 
      ```
 2. 이벤트 정의 생성:
    - Alerts > Event Definitions > Create Event Definition을 클릭합니다.
-   - Title: `[S2] Brute Force Attack Detection`, Priority: High
+   - Title: `[S1] Brute Force Attack Detection`, Priority: High
    - Condition Type: Aggregation
    - Search Query:
      ```text
@@ -166,7 +166,7 @@ Graylog가 내부망의 n8n 웹훅 엔드포인트로 HTTP 요청을 보낼 수 
    - Group by Field(s): `client_ip`
    - Threshold: `count() >= 5`
    - Fields: Field Name `client_ip` / Value `${source.client_ip}` 매핑
-   - Notifications: `S2 n8n Webhook (Brute Force)` 연결
+   - Notifications: `S1 n8n Webhook (Brute Force)` 연결
    - Grace Period: 1 minute (60 seconds)
      집계 범위가 1분이고 실행 주기가 30초이므로 Grace Period를 60초로 설정합니다. 동일 공격 건에 대한 중복 알림을 방지합니다.
 
@@ -174,7 +174,7 @@ Graylog가 내부망의 n8n 웹훅 엔드포인트로 HTTP 요청을 보낼 수 
 
 ### 2-5. 탐지 규칙 2: 허니토큰 침입 탐지
 1. Alerts > Event Definitions > Create Event Definition을 클릭합니다.
-2. Title: `[S2] Honeytoken Infiltration Alert`, Priority: Critical
+2. Title: `[S1] Honeytoken Infiltration Alert`, Priority: Critical
 3. Condition Type: Filter
 4. Search Query: `_honeytoken_alert:true OR event_type:HONEYTOKEN_ACCESS`
 5. Threshold: `count() > 0` (1회 발생 즉시 탐지)
@@ -183,14 +183,14 @@ Graylog가 내부망의 n8n 웹훅 엔드포인트로 HTTP 요청을 보낼 수 
 
 ## 4. 3단계: n8n SOAR 자동 대응 워크플로우 등록
 
-워크플로우 파일: [`scenario2-middleware/n8n/scenario2_bruteforce_response_workflow.json`](./n8n/scenario2_bruteforce_response_workflow.json)
+워크플로우 파일: [`scenario1-middleware/n8n/scenario1_bruteforce_response_workflow.json`](./n8n/scenario1_bruteforce_response_workflow.json)
 
 ### 등록 및 활성화 절차
 1. n8n 콘솔(`http://127.0.0.1:5678`)에 접속합니다.
 2. 좌측 Workflows 메뉴로 이동한 뒤 우측 상단 메뉴에서 Import from File을 선택합니다.
-3. [`scenario2_bruteforce_response_workflow.json`](./n8n/scenario2_bruteforce_response_workflow.json) 파일을 업로드합니다.
+3. [`scenario1_bruteforce_response_workflow.json`](./n8n/scenario1_bruteforce_response_workflow.json) 파일을 업로드합니다.
 4. 워크플로우 노드 구성을 확인합니다.
-   - **Scenario 2 Webhook**: `POST /webhook/scenario2-bruteforce` 수신
+   - **Scenario 1 Webhook**: `POST /webhook/scenario1-bruteforce` 수신
    - **Normalize Brute Force Event**: 이벤트 페이로드에서 `client_ip`, `detection_reason` 등 정규화
    - **Block Attacker IP**: `{{ $env.AUTOMATION_WEBHOOK_BASE_URL || 'http://host.docker.internal:5000' }}/automation/revoke-key`를 호출하여 MySQL `blocked_ips` 테이블에 공격자 IP 등록 및 티켓 생성
    - **Format Alert Message**: 텍스트 알림 포맷 구성
@@ -325,8 +325,8 @@ PowerShell 명령으로 직접 수동 검증할 수도 있습니다.
 ```
 
 #### 시연 결과 확인 위치
-1. Graylog Alerts (`http://127.0.0.1:9000/alerts`): `[S2] Brute Force Attack Detection` 이벤트 발생 확인 (동일 IP 5회 이상 실패 집계)
-2. n8n Executions (`http://127.0.0.1:5678`): `Scenario 2 - Middleware Brute Force Response` 워크플로우 실행 성공 및 `/automation/revoke-key` 호출 확인
+1. Graylog Alerts (`http://127.0.0.1:9000/alerts`): `[S1] Brute Force Attack Detection` 이벤트 발생 확인 (동일 IP 5회 이상 실패 집계)
+2. n8n Executions (`http://127.0.0.1:5678`): `Scenario 1 - Middleware Brute Force Response` 워크플로우 실행 성공 및 `/automation/revoke-key` 호출 확인
 3. 웹 애플리케이션 차단 및 관제 대시보드:
    ```powershell
    # 차단된 공격자 IP(10.0.0.99)로 재접속 시도 -> HTTP 403 Forbidden 반환 확인

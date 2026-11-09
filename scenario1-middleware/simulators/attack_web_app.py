@@ -1,4 +1,4 @@
-"""Web-App / API Server Attack Simulator for Scenario 2 Middleware.
+"""Web-App / API Server Attack Simulator for Scenario 1 Middleware.
 
 Sends attack traffic through the Main API server (http://127.0.0.1:5000/api/data),
 verifies that API security events are generated, buffered by Middleware (:8000),
@@ -151,7 +151,7 @@ async def run_web_app_attack(count: int = 10, concurrency: int = 5) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Web-App Attack Simulator for Scenario 2 Middleware")
+    parser = argparse.ArgumentParser(description="Web-App Attack Simulator for Scenario 1 Middleware")
     parser.add_argument("--count", type=int, default=10, help="Number of attack requests (default: 10)")
     parser.add_argument("--concurrency", type=int, default=5, help="Concurrent HTTP requests (default: 5)")
     args = parser.parse_args()

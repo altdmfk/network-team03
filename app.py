@@ -360,7 +360,7 @@ def blocked_ips():
 
 @app.post("/automation/killchain-response")
 def automation_killchain_response():
-    """Display scenario 4's CRITICAL result, without executing its responses."""
+    """Display scenario 3's CRITICAL result, without executing its responses."""
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return jsonify(error="invalid_input", message="A JSON object is required"), 400

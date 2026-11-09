@@ -4,7 +4,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "scenario3-api-key-compromised",
+        "path": "scenario2-api-key-compromised",
         "options": {}
       },
       "type": "n8n-nodes-base.webhook",
@@ -157,7 +157,7 @@
             {
               "id": "e7738976-3936-451e-8d75-56e50a8b4027",
               "name": "text",
-              "value": "={{ (() => {\n  const response = $('API 키 폐기·재발급·IP 차단').item.json;\n  const incident = response.incident ?? {};\n  const reason = incident.detection_reason ?? incident.reason ?? response.detection_reason ?? 'unknown';\n  const reasons = { not_allowed_ip: '비허용 IP에서 API 키 사용', suspicious_user_agent: '의심스러운 User-Agent에서 API 키 사용' };\n  const incidentId = incident.incident_id ?? response.incident_id;\n  const incidentState = incidentId ? (incident.status === 'created' ? '생성 완료' : '생성 확인') : '미생성';\n  const revoked = response.key_revoked === true;\n  const replaced = Boolean(response.new_api_key_id);\n  const blocked = response.ip_blocked === true || incident.ip_blocked === true;\n  return '🚨 [시나리오 3 API 키 유출 의심]\\n'\n    + '키 식별자: ' + String(incident.api_key_id ?? response.api_key_id ?? '확인 불가')\n    + ' | 공격 IP: ' + String(incident.client_ip ?? response.client_ip ?? '확인 불가')\n    + '\\n탐지 사유: ' + String(reasons[reason] ?? reason)\n    + '\\n📋 인시던트: ' + String(incidentId ?? '없음') + ' | 생성 상태: ' + incidentState\n    + '\\n대응 결과: 기존 키 폐기 ' + (revoked ? '완료' : '미확인')\n    + ' · 교체 키 발급 ' + (replaced ? '확인' : '미확인')\n    + ' · IP 차단 ' + (blocked ? '완료' : '미확인');\n  })() }}",
+              "value": "={{ (() => {\n  const response = $('API 키 폐기·재발급·IP 차단').item.json;\n  const incident = response.incident ?? {};\n  const reason = incident.detection_reason ?? incident.reason ?? response.detection_reason ?? 'unknown';\n  const reasons = { not_allowed_ip: '비허용 IP에서 API 키 사용', suspicious_user_agent: '의심스러운 User-Agent에서 API 키 사용' };\n  const incidentId = incident.incident_id ?? response.incident_id;\n  const incidentState = incidentId ? (incident.status === 'created' ? '생성 완료' : '생성 확인') : '미생성';\n  const revoked = response.key_revoked === true;\n  const replaced = Boolean(response.new_api_key_id);\n  const blocked = response.ip_blocked === true || incident.ip_blocked === true;\n  return '🚨 [시나리오 2 API 키 유출 의심]\\n'\n    + '키 식별자: ' + String(incident.api_key_id ?? response.api_key_id ?? '확인 불가')\n    + ' | 공격 IP: ' + String(incident.client_ip ?? response.client_ip ?? '확인 불가')\n    + '\\n탐지 사유: ' + String(reasons[reason] ?? reason)\n    + '\\n📋 인시던트: ' + String(incidentId ?? '없음') + ' | 생성 상태: ' + incidentState\n    + '\\n대응 결과: 기존 키 폐기 ' + (revoked ? '완료' : '미확인')\n    + ' · 교체 키 발급 ' + (replaced ? '확인' : '미확인')\n    + ' · IP 차단 ' + (blocked ? '완료' : '미확인');\n  })() }}",
               "type": "string"
             }
           ]

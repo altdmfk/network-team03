@@ -29,7 +29,7 @@ with source.open(encoding='utf-8') as stream:
             if event.get('target_resource') not in ('/api/data', '/automation/revoke-key'):
                 continue
             subprocess.run(['docker', 'exec', '-i', 'wazuh-manager', 'sh', '-c',
-                            'cat >> /var/ossec/logs/enginesquare-scenario3.jsonl'],
+                            'cat >> /var/ossec/logs/enginesquare-scenario2.jsonl'],
                            input=line.encode('utf-8'), check=True)
             print(event.get('timestamp'), event.get('event_type'), event.get('client_ip'))
     except KeyboardInterrupt:
