@@ -272,42 +272,6 @@ class SecurityStore:
                 connection.rollback()
                 raise
 
-    def respond_honeytoken(self, event):
-        """Commit a honeytoken ticket, event and shared IP block atomically.
-
-        Every delivery records an occurrence; identity is scenario/IP only.
-        Token metadata is descriptive; no API key is revoked or issued.
-        """
-        with self.connect() as connection, connection.cursor() as cursor:
-            connection.begin()
-            try:
-                identifier = assign_incident(cursor, "honeytoken_used", event["client_ip"], "")
-                cursor.execute("SELECT ip FROM blocked_ips WHERE ip=%s FOR UPDATE", (event["client_ip"],))
-                already_blocked = cursor.fetchone() is not None
-                changed = not already_blocked
-                cursor.execute("INSERT INTO incident_tickets "
-                               "(id,title,ip,api_key_id,scenario,event,occurrence_count,action,status,severity,severity_class,created_at,closed_at) "
-                               "VALUES (%s,%s,%s,'','시나리오 1','honeytoken_used',1,'IP 차단','열림','높음','high',%s,'-') "
-                               "ON DUPLICATE KEY UPDATE occurrence_count=occurrence_count+1",
-                               (identifier, f"허니토큰 미끼 계정 사용 ({event['token_id']})",
-                                event["client_ip"], event["timestamp"]))
-                cursor.execute("INSERT INTO security_events "
-                               "(event_type,incident_id,api_key_id,client_ip,severity,status,decision,action,reason,event_timestamp,created_at,origin) "
-                               "VALUES ('honeytoken_used',%s,%s,%s,'높음','열림','거부','IP 차단',%s,%s,%s,'n8n')",
-                               (identifier, event["token_id"], event["client_ip"], event["reason"],
-                                event["timestamp"], timestamp()))
-                if changed:
-                    self._block(cursor, event["client_ip"], event["reason"], identifier)
-                connection.commit()
-                return {"event_type": "honeytoken_used", "incident_id": identifier,
-                        "token_id": event["token_id"], "client_ip": event["client_ip"],
-                        "ip": event["client_ip"], "changed": changed,
-                        "status": "created",
-                        "ip_blocked": already_blocked or changed}
-            except Exception:
-                connection.rollback()
-                raise
-
     def respond(self, key_id, reason, ip, incident_id):
         """Persist key revocation, replacement and IP block in one transaction."""
         block_ip = ip not in {"unknown", "127.0.0.1"}

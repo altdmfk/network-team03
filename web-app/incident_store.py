@@ -29,14 +29,6 @@ def initialize_incidents(cursor):
     cursor.execute("INSERT INTO incident_counters (name,last_number) VALUES ('api',%s) "
                    "ON DUPLICATE KEY UPDATE last_number=GREATEST(last_number,VALUES(last_number))", (maximum,))
 
-    cursor.execute("SELECT COALESCE(MAX(number),0) AS last_number FROM ("
-                   "SELECT CAST(SUBSTRING(id,11) AS UNSIGNED) AS number FROM incident_tickets WHERE id REGEXP '^INC-HONEY-[0-9]+$' "
-                   "UNION ALL SELECT CAST(SUBSTRING(incident_id,11) AS UNSIGNED) FROM incident_registry WHERE incident_id REGEXP '^INC-HONEY-[0-9]+$' "
-                   "UNION ALL SELECT CAST(SUBSTRING(incident_id,11) AS UNSIGNED) FROM security_events WHERE incident_id REGEXP '^INC-HONEY-[0-9]+$'"
-                   ") honey_numbers")
-    maximum = cursor.fetchone()["last_number"]
-    cursor.execute("INSERT INTO incident_counters (name,last_number) VALUES ('honey',%s) "
-                   "ON DUPLICATE KEY UPDATE last_number=GREATEST(last_number,VALUES(last_number))", (maximum,))
 
     cursor.execute("SELECT COALESCE(MAX(number),0) AS last_number FROM ("
                    "SELECT CAST(SUBSTRING(id,15) AS UNSIGNED) AS number FROM incident_tickets WHERE id REGEXP '^INC-KILLCHAIN-[0-9]+$' "
@@ -51,7 +43,7 @@ def initialize_incidents(cursor):
 def assign_incident(cursor, event_type, ip, key_id, supplied=None):
     """Caller holds a transaction; allocations lock their scenario counter row."""
     event_type, ip, key_id = event_type.lower(), ip or "", key_id or ""
-    counter, prefix = ("honey", "INC-HONEY-") if event_type == "honeytoken_used" else ("api", "INC-API-")
+    counter, prefix = "api", "INC-API-"
     if event_type == "killchain_critical":
         counter, prefix = "killchain", "INC-KILLCHAIN-"
     pattern = re.escape(prefix) + r"\d{3,}"

@@ -50,7 +50,7 @@ $env:MIDDLEWARE_INGEST_URL = "http://127.0.0.1:8000/v1/ingest"
 .\.venv\Scripts\python.exe app.py
 ```
 
-이벤트의 고정 필드는 `timestamp`, `event_type`, `api_key_id`, `token_id`,
+이벤트의 고정 필드는 `timestamp`, `event_type`, `api_key_id`,
 `client_ip`, `target_resource`, `status_code`이며, 상황에 따라 `user_agent`,
 `detection_reason`, `incident_id`, `action`, `status`가 추가됩니다.
 

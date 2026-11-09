@@ -10,8 +10,7 @@ sys.path.pop(0)
 
 class IncidentPrefixTest(unittest.TestCase):
     def test_separate_counters(self):
-        for event, counter, prefix in [('honeytoken_used', 'honey', 'INC-HONEY-'),
-                                       ('api_key_compromised', 'api', 'INC-API-'),
+        for event, counter, prefix in [('api_key_compromised', 'api', 'INC-API-'),
                                        ('killchain_critical', 'killchain', 'INC-KILLCHAIN-')]:
             cursor = MagicMock()
             cursor.fetchone.side_effect = [{'last_number': 4}, None, None, None, None]
@@ -22,13 +21,13 @@ class IncidentPrefixTest(unittest.TestCase):
     def test_old_registered_ticket_stays_linked(self):
         cursor = MagicMock()
         cursor.fetchone.side_effect = [{'last_number': 0}, {'incident_id': 'INC-API-012'}]
-        self.assertEqual(assign_incident(cursor, 'honeytoken_used', '192.0.2.1', ''), 'INC-API-012')
+        self.assertEqual(assign_incident(cursor, 'killchain_critical', '192.0.2.1', ''), 'INC-API-012')
 
     def test_wrong_scenario_prefix_is_rejected(self):
         cursor = MagicMock()
         cursor.fetchone.side_effect = [{'last_number': 0}, None]
         with self.assertRaises(IncidentConflict):
-            assign_incident(cursor, 'honeytoken_used', '192.0.2.1', '', 'INC-API-001')
+            assign_incident(cursor, 'killchain_critical', '192.0.2.1', '', 'INC-API-001')
 
 
 if __name__ == '__main__':

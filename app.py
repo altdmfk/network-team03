@@ -49,8 +49,6 @@ EVENT_SEVERITY = {
     "authentication_failed": 4,
     "api_request_rate_limited": 4,
     "api_key_compromised": 1,
-    "HONEYTOKEN_ACCESS": 1,
-    "honeytoken_used": 1,
     "PORT_SCAN": 4,
     "BRUTE_FORCE": 2,
     "IOT_CONTROL": 1,
@@ -130,7 +128,6 @@ def write_security_log(
     event_type,
     status_code,
     api_key_id="unknown",
-    token_id=None,
     detection_reason=None,
     incident_id=None,
     action=None,
@@ -147,7 +144,6 @@ def write_security_log(
         "user_agent": request.headers.get("User-Agent", "unknown"),
     }
     optional_fields = {
-        "token_id": token_id,
         "detection_reason": detection_reason,
         "incident_id": incident_id,
         "action": action,
@@ -400,36 +396,6 @@ def automation_killchain_response():
     return jsonify(security_store.record_killchain_result(event)), 200
 
 
-@app.post("/automation/honeytoken-response")
-def automation_honeytoken_response():
-    """Receive the scenario 1 detection; persist its ticket and shared IP block."""
-    body = request.get_json(silent=True)
-    if not isinstance(body, dict):
-        return jsonify(error="invalid_input", message="A JSON object is required"), 400
-    event = dict(body)
-    try:
-        supplied_ip = event.get("client_ip")
-        if not isinstance(supplied_ip, str):
-            raise ValueError("client_ip must be an IP address string")
-        event["client_ip"] = str(ipaddress.ip_address(supplied_ip.strip()))
-    except (ValueError, TypeError) as error:
-        return jsonify(error="invalid_input", message=str(error)), 400
-    event["event_type"] = "honeytoken_used"
-    for field, fallback, limit in (("token_id", "미상", 100), ("username", "미상", 100),
-                                   ("placement", "미상", 100),
-                                   ("reason", "허니토큰 미끼 계정 사용", 255)):
-        value = event.get(field)
-        event[field] = value.strip()[:limit] if isinstance(value, str) and value.strip() else fallback
-    try:
-        occurred = datetime.fromisoformat(str(event.get("timestamp", "")).replace("Z", "+00:00"))
-        if occurred.tzinfo is None:
-            raise ValueError("Missing timezone")
-        event["timestamp"] = occurred.isoformat()
-    except ValueError:
-        event["timestamp"] = utc_timestamp()
-    return jsonify(security_store.respond_honeytoken(event)), 200
-
-
 @app.post("/automation/revoke-key")
 def automation_revoke_key():
     """Demo n8n webhook for response after Graylog/Wazuh detection."""
@@ -447,20 +413,6 @@ def automation_revoke_key():
         return jsonify(error="invalid_input", message="Invalid client IP"), 400
     return jsonify(response), 200
 
-
-
-@app.route("/api/honeytoken", methods=["GET", "POST"])
-def honeytoken_endpoint():
-    current_ip = client_ip()
-    token_id = request.headers.get("X-Honeytoken-ID", "HT-001")
-    event = write_security_log(
-        "HONEYTOKEN_ACCESS",
-        403,
-        api_key_id="honeytoken_trap",
-        token_id=token_id,
-        detection_reason="honeytoken_access_detected",
-    )
-    return jsonify(error="forbidden", message="Honeytoken trap triggered! Intrusion alert recorded.", token_id=token_id), 403
 
 
 @app.post("/api/admin/unblock")
