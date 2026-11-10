@@ -70,6 +70,11 @@ flowchart LR
 - 쿠버네티스는 같은 네임스페이스의 Service 이름(`ingestor`, `mock-graylog`)을 따서 `INGESTOR_PORT=tcp://10.96.x.x:8000`, `MOCK_GRAYLOG_PORT=tcp://10.96.x.x:12201` 환경변수를 모든 파드에 자동 주입한다.
 - 이 값이 애플리케이션 `src/config.py`가 정수 포트 번호로 읽는 환경변수 이름과 겹쳐 파드 시작 시 `ValueError`가 났다. 이를 막기 위해 `enableServiceLinks: false`로 자동 환경변수 주입을 끄고 쿠버네티스 DNS(`http://mock-graylog:12201/gelf`)로만 통신하게 했다.
 
+### 2.4 Helm 템플릿 분리 및 보안·데이터 보존 설정
+- **Ingress `/metrics` 경로 미노출**: Prometheus 메트릭(`/metrics/prometheus`, `/metrics`)은 클러스터 내부에서 `ServiceMonitor`로만 수집하면 되므로 외부 Ingress 경로 규칙에서는 제외했다.
+- **`{{ .Release.Namespace }}` 일원화**: `values.yaml`에 네임스페이스를 따로 두지 않고 모든 템플릿이 `{{ .Release.Namespace }}`를 참조하게 해 `helm upgrade --install -n <namespace>` 명령의 네임스페이스와 어긋나지 않게 했다.
+- **PVC 템플릿 분리와 삭제 방지(`helm.sh/resource-policy: keep`)**: `ConfigMap`·`Secret`(`configmap-secret.yaml`)과 `PersistentVolumeClaim`(`pvc.yaml`)을 별도 파일로 분리했다. 파드의 `checksum/config` 해시 대상은 `configmap-secret.yaml`만 바라보게 해 설정값이 바뀔 때만 파드가 재시작되도록 했고, PVC에는 `helm.sh/resource-policy: keep` 어노테이션을 붙여 차트를 삭제(`helm uninstall`)해도 SQLite WAL 데이터가 담긴 볼륨이 지워지지 않게 했다.
+
 ---
 
 ## 3. 디렉터리 구조
@@ -95,7 +100,8 @@ k8s/
         ├── Chart.yaml
         ├── values.yaml
         └── templates/
-            ├── config-and-pvc.yaml
+            ├── configmap-secret.yaml
+            ├── pvc.yaml
             ├── ingestor.yaml
             ├── consumer-worker.yaml
             ├── mock-graylog.yaml

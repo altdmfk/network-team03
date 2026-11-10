@@ -3,7 +3,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: soar-ingestor-ingress
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Release.Namespace }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
@@ -25,13 +25,6 @@ spec:
                 port:
                   number: {{ .Values.ingestor.port }}
           - path: /health
-            pathType: Prefix
-            backend:
-              service:
-                name: ingestor
-                port:
-                  number: {{ .Values.ingestor.port }}
-          - path: /metrics
             pathType: Prefix
             backend:
               service:

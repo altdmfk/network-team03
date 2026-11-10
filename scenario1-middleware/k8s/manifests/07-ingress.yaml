@@ -30,10 +30,3 @@ spec:
                 name: ingestor
                 port:
                   number: 8000
-          - path: /metrics
-            pathType: Prefix
-            backend:
-              service:
-                name: ingestor
-                port:
-                  number: 8000

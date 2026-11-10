@@ -3,7 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: soar-ingestor-monitor
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: ingestor
     release: kube-prometheus-stack
@@ -13,7 +13,7 @@ spec:
       app: ingestor
   namespaceSelector:
     matchNames:
-      - {{ .Values.namespace }}
+      - {{ .Release.Namespace }}
   endpoints:
     - port: http
       path: /metrics/prometheus
@@ -23,7 +23,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: soar-consumer-worker-monitor
-  namespace: {{ .Values.namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: consumer-worker
     release: kube-prometheus-stack
@@ -33,7 +33,7 @@ spec:
       app: consumer-worker
   namespaceSelector:
     matchNames:
-      - {{ .Values.namespace }}
+      - {{ .Release.Namespace }}
   endpoints:
     - port: metrics
       path: /metrics
