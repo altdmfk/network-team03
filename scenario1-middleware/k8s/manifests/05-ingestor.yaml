@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestor
+  namespace: soar
+  labels:
+    app: ingestor
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ingestor
+  template:
+    metadata:
+      labels:
+        app: ingestor
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: ingestor
+          image: soar-middleware:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: soar-config
+            - secretRef:
+                name: soar-secret
+          volumeMounts:
+            - name: state-volume
+              mountPath: /app/state
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: state-volume
+          persistentVolumeClaim:
+            claimName: soar-state-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestor
+  namespace: soar
+  labels:
+    app: ingestor
+spec:
+  selector:
+    app: ingestor
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

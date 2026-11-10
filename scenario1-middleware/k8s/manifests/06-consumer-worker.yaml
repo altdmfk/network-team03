@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-worker
+  namespace: soar
+  labels:
+    app: consumer-worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: consumer-worker
+  template:
+    metadata:
+      labels:
+        app: consumer-worker
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: consumer-worker
+          image: soar-middleware:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["python", "src/consumer_worker.py"]
+          ports:
+            - name: metrics
+              containerPort: 9100
+          envFrom:
+            - configMapRef:
+                name: soar-config
+            - secretRef:
+                name: soar-secret
+          volumeMounts:
+            - name: state-volume
+              mountPath: /app/state
+          readinessProbe:
+            tcpSocket:
+              port: 9100
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9100
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+      volumes:
+        - name: state-volume
+          persistentVolumeClaim:
+            claimName: soar-state-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer-worker
+  namespace: soar
+  labels:
+    app: consumer-worker
+spec:
+  selector:
+    app: consumer-worker
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: 9100

@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-graylog
+  namespace: soar
+  labels:
+    app: mock-graylog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-graylog
+  template:
+    metadata:
+      labels:
+        app: mock-graylog
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mock-graylog
+          image: soar-middleware:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", "12201", "--workers", "1"]
+          ports:
+            - name: http
+              containerPort: 12201
+          env:
+            - name: MOCK_GRAYLOG_HOST
+              value: "0.0.0.0"
+            - name: MOCK_GRAYLOG_PORT
+              value: "12201"
+            - name: KILL_CHAIN_TARGET_IP
+              value: "10.0.0.99"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 12201
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 12201
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-graylog
+  namespace: soar
+  labels:
+    app: mock-graylog
+spec:
+  selector:
+    app: mock-graylog
+  ports:
+    - name: http
+      port: 12201
+      targetPort: 12201
