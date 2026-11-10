@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: consumer-worker
+spec:
+  replicas: {{ .Values.consumerWorker.replicas }}
+  strategy:
+    type: {{ .Values.consumerWorker.strategy }}
+  selector:
+    matchLabels:
+      app: consumer-worker
+  template:
+    metadata:
+      labels:
+        app: consumer-worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config-and-pvc.yaml") . | sha256sum }}
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: {{ .Values.storage.fsGroup }}
+      containers:
+        - name: consumer-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "src/consumer_worker.py"]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.consumerWorker.metricsPort }}
+          envFrom:
+            - configMapRef:
+                name: soar-config
+            - secretRef:
+                name: soar-secret
+          volumeMounts:
+            - name: state-volume
+              mountPath: /app/state
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.consumerWorker.metricsPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.consumerWorker.metricsPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.consumerWorker.resources | nindent 12 }}
+      volumes:
+        - name: state-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.storage.pvcName }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: consumer-worker
+spec:
+  selector:
+    app: consumer-worker
+  ports:
+    - name: metrics
+      port: {{ .Values.consumerWorker.metricsPort }}
+      targetPort: {{ .Values.consumerWorker.metricsPort }}

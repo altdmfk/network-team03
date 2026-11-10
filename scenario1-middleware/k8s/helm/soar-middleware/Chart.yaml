@@ -1,0 +1,6 @@
+apiVersion: v2
+name: soar-middleware
+description: SOAR Lightweight Broker Log Buffering Middleware Helm Chart for Kubernetes (kind)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

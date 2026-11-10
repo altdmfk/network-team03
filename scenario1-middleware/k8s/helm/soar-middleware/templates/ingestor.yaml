@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestor
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: ingestor
+spec:
+  replicas: {{ .Values.ingestor.replicas }}
+  strategy:
+    type: {{ .Values.ingestor.strategy }}
+  selector:
+    matchLabels:
+      app: ingestor
+  template:
+    metadata:
+      labels:
+        app: ingestor
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config-and-pvc.yaml") . | sha256sum }}
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: {{ .Values.storage.fsGroup }}
+      containers:
+        - name: ingestor
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ingestor.port }}
+          envFrom:
+            - configMapRef:
+                name: soar-config
+            - secretRef:
+                name: soar-secret
+          volumeMounts:
+            - name: state-volume
+              mountPath: /app/state
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: {{ .Values.ingestor.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: {{ .Values.ingestor.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.ingestor.resources | nindent 12 }}
+      volumes:
+        - name: state-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.storage.pvcName }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestor
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: ingestor
+spec:
+  selector:
+    app: ingestor
+  ports:
+    - name: http
+      port: {{ .Values.ingestor.port }}
+      targetPort: {{ .Values.ingestor.port }}

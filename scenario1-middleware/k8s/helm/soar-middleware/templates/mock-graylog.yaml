@@ -1,0 +1,64 @@
+{{- if .Values.mockGraylog.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-graylog
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mock-graylog
+spec:
+  replicas: {{ .Values.mockGraylog.replicas }}
+  selector:
+    matchLabels:
+      app: mock-graylog
+  template:
+    metadata:
+      labels:
+        app: mock-graylog
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mock-graylog
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["uvicorn", "mock_graylog_server:app", "--app-dir", "simulators", "--host", "0.0.0.0", "--port", {{ .Values.mockGraylog.port | quote }}, "--workers", "1"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.mockGraylog.port }}
+          env:
+            - name: MOCK_GRAYLOG_HOST
+              value: "0.0.0.0"
+            - name: MOCK_GRAYLOG_PORT
+              value: {{ .Values.mockGraylog.port | quote }}
+            - name: KILL_CHAIN_TARGET_IP
+              value: "10.0.0.99"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.mockGraylog.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.mockGraylog.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mockGraylog.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-graylog
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mock-graylog
+spec:
+  selector:
+    app: mock-graylog
+  ports:
+    - name: http
+      port: {{ .Values.mockGraylog.port }}
+      targetPort: {{ .Values.mockGraylog.port }}
+{{- end }}

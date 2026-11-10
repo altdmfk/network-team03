@@ -1,0 +1,101 @@
+namespace: soar
+
+image:
+  repository: soar-middleware
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+storage:
+  pvcName: soar-state-pvc
+  size: 1Gi
+  accessMode: ReadWriteOnce
+  fsGroup: 10001
+
+ingestor:
+  replicas: 1
+  strategy: Recreate
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+
+consumerWorker:
+  replicas: 1
+  strategy: Recreate
+  metricsPort: 9100
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+
+mockGraylog:
+  enabled: true
+  replicas: 1
+  port: 12201
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  host: localhost
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 5s
+
+config:
+  BROKER_DB_PATH: "/app/state/broker_wal.db"
+  METRICS_DB_PATH: "/app/state/metrics.db"
+  DEAD_LETTER_FILE: "/app/state/dead_letter_logs.jsonl"
+  BROKER_TOPIC: "security-logs"
+  BROKER_PRIORITY_TOPIC: "security-logs.priority"
+  PRIORITY_EVENT_TYPES: "HONEYTOKEN_ACCESS"
+  PRIORITY_MAX_SEVERITY: "2"
+  BROKER_PARTITIONS: "3"
+  BROKER_RETENTION_MS: "86400000"
+  BROKER_CONSUMER_GROUP: "graylog-shipper-group"
+  DLQ_BACKEND: "broker"
+  BROKER_DLQ_TOPIC: "security-logs.dlq"
+  BROKER_RETRY_1M_TOPIC: "security-logs.retry.1m"
+  BROKER_RETRY_10M_TOPIC: "security-logs.retry.10m"
+  BROKER_POISON_TOPIC: "security-logs.poison"
+  INGESTOR_HOST: "0.0.0.0"
+  INGESTOR_PORT: "8000"
+  BATCH_SIZE: "100"
+  MAX_LOGS_PER_SEC: "500.0"
+  MAX_BATCHES_PER_SECOND: "5.0"
+  BATCH_LINGER_MS: "100"
+  POLL_TIMEOUT: "0.1"
+  AUTH_ENABLED: "true"
+  SQLITE_CACHE_SIZE_KB: "-64000"
+  SQLITE_BUSY_TIMEOUT_MS: "15000"
+  STANDARD_RESERVED_SHARE: "0.3"
+  GRAYLOG_GELF_URL: "http://mock-graylog:12201/gelf"
+  GELF_HOST: "security-middleware"
+  DRY_RUN_GRAYLOG_MOCK: "false"
+  GELF_SPLIT_POST: "true"
+  GELF_SPLIT_MAX_WORKERS: "20"
+  BASE_BACKOFF_SECONDS: "1.0"
+  MAX_BACKOFF_SECONDS: "30.0"
+  MAX_DELIVERY_RETRIES: "0"
+  ENABLE_TIERED_RETRY: "true"
+
+secret:
+  INGEST_API_KEYS: "prod-ingest-key-1,prod-ingest-key-2"
+  ADMIN_API_KEY: "prod-admin-secret-key-99"
+  DISCORD_BOT_TOKEN: "dummy-discord-bot-token-for-local-k8s-lab"
+  DISCORD_CHANNEL_ID: "1567368969524879513"
